@@ -6,6 +6,7 @@ Python 标准库实现的第一版 Demo 后端，本地内存保存生成结果�
 
 ```powershell
 cd E:\agent\七牛云\backend
+py -m pip install -r requirements.txt
 py server.py
 ```
 
@@ -15,4 +16,3 @@ py server.py
 - `POST /api/analyze`
 - `POST /api/generate`
 - `POST /api/validate`
-

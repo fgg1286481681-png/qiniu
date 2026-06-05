@@ -16,6 +16,7 @@
 
 ```powershell
 cd E:\agent\七牛云\backend
+py -m pip install -r requirements.txt
 py server.py
 ```
 

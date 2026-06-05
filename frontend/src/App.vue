@@ -33,6 +33,8 @@
             <h3>章节识别</h3>
             <strong :class="{ danger: chapterCount > 0 && chapterCount < 3 }">{{ chapterCount }} 章</strong>
           </div>
+          <p v-if="parseWarning" class="warning">{{ parseWarning }}</p>
+          <p v-else-if="parseMode" class="muted">解析模式：{{ parseMode }}</p>
           <ul v-if="chapters.length">
             <li v-for="chapter in chapters" :key="chapter.chapter_id">
               <span>{{ chapter.title }}</span>
@@ -121,20 +123,21 @@
           </span>
         </div>
 
-        <textarea v-model="yamlText" class="yaml-editor" placeholder="生成后展示 YAML"></textarea>
+        <textarea v-model="yamlText" class="yaml-editor" placeholder="生成后展示 YAML，可编辑后重新校验"></textarea>
 
         <div class="actions">
           <button :disabled="!yamlText" @click="copyYaml">复制</button>
-          <button :disabled="!script.schema_version" @click="validateCurrent">校验</button>
+          <button :disabled="!yamlText" @click="validateCurrent">校验</button>
         </div>
 
         <div class="validation">
           <h3>校验报告</h3>
-          <p v-if="validation.valid" class="pass">YAML 结构通过第一版 Schema 校验</p>
+          <p v-if="validation.valid" class="pass">YAML 结构通过 Schema 和引用校验</p>
           <ul v-else-if="validation.errors?.length">
-            <li v-for="item in validation.errors" :key="item.path">
+            <li v-for="item in validation.errors" :key="`${item.path}-${item.message}`">
               <strong>{{ item.path }}</strong>
               <span>{{ item.message }}</span>
+              <em v-if="item.suggestion">{{ item.suggestion }}</em>
             </li>
           </ul>
           <p v-else class="muted">暂无校验结果</p>
@@ -147,20 +150,10 @@
 <script setup>
 import { computed, ref } from "vue";
 
-const sampleText = `第一章 初入会议室
-林夏推开会议室的门，所有人的目光都落在她身上。她刚加入项目组，却被要求解释一个失败方案。
-周谨合上电脑，声音很低：“你知道这个问题拖了多久吗？”
-林夏握紧资料：“我知道，但我找到新的证据。”
-
+const sampleText = `第一章 初入会议室 林夏推开会议室的门，所有人的目光都落在她身上。她刚加入项目组，却被要求解释一个失败方案。周谨合上电脑，声音很低：“你知道这个问题拖了多久吗？”林夏握紧资料：“我知道，但我找到新的证据。”
 第二章 被质疑的方案
-办公室里，林夏把数据重新投到屏幕上。周谨没有立刻反驳，其他同事开始交换眼神。
-她指出旧方案忽略了用户留存的变化，也说明预算并不是最大阻碍。
-周谨问：“如果你错了呢？”林夏回答：“那我承担后果。”
-
-第三章 夜晚的转折
-夜里的公司只剩几盏灯。林夏在会议室重新核对日志，发现真正的问题来自一次被遗漏的配置变更。
-周谨走到门口，看见她还没离开。
-林夏抬头说：“明天之前，我能把完整报告交给你。”`;
+办公室里，林夏把数据重新投到屏幕上。周谨没有立刻反驳，其他同事开始交换眼神。她指出旧方案忽略了用户留存的变化，也说明预算并不是最大阻碍。周谨问：“如果你错了呢？”林夏回答：“那我承担后果。”
+第三章 夜晚的转折 夜里的公司只剩几盏灯。林夏在会议室重新核对日志，发现真正的问题来自一次被遗漏的配置变更。周谨走到门口，看见她还没离开。林夏抬头说：“明天之前，我能把完整报告交给你。”`;
 
 const title = ref("示例小说改编");
 const novelText = ref("");
@@ -172,6 +165,8 @@ const script = ref({});
 const yamlText = ref("");
 const validation = ref({});
 const tab = ref("characters");
+const parseMode = ref("");
+const parseWarning = ref("");
 const steps = ["章节解析", "信息抽取", "场景规划", "剧本生成", "Schema 校验"];
 const currentStep = ref("待开始");
 const doneSteps = ref([]);
@@ -196,11 +191,17 @@ async function postJson(url, payload) {
   return data;
 }
 
+function syncParseInfo(data) {
+  parseMode.value = data.parse_mode || "";
+  parseWarning.value = data.parse_warning || "";
+}
+
 async function analyzeText() {
   errorMessage.value = "";
   const data = await postJson("/api/analyze", { text: novelText.value });
   chapters.value = data.chapters;
   chapterCount.value = data.chapter_count;
+  syncParseInfo(data);
 }
 
 function loadSample() {
@@ -232,6 +233,7 @@ async function generateScript() {
     script.value = data.script;
     yamlText.value = data.yaml;
     validation.value = data.validation;
+    syncParseInfo(data);
     chapters.value = data.script.chapters.map((item) => ({
       chapter_id: item.id,
       title: item.title,
@@ -249,8 +251,12 @@ async function generateScript() {
 }
 
 async function validateCurrent() {
-  const data = await postJson("/api/validate", { script: script.value });
+  errorMessage.value = "";
+  const data = await postJson("/api/validate", { yaml: yamlText.value });
   validation.value = data;
+  if (data.script) {
+    script.value = data.script;
+  }
 }
 
 async function copyYaml() {
@@ -267,4 +273,3 @@ function downloadYaml() {
   URL.revokeObjectURL(url);
 }
 </script>
-

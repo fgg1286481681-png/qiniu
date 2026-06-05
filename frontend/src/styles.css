@@ -187,6 +187,10 @@ textarea {
   color: #b42318;
 }
 
+.warning {
+  color: #9a5b00;
+}
+
 .pass {
   color: #167a3f;
 }
@@ -305,6 +309,13 @@ textarea {
   display: block;
 }
 
+.validation li em {
+  display: block;
+  color: #6d7b88;
+  font-style: normal;
+  margin-top: 2px;
+}
+
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -333,4 +344,3 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
-
