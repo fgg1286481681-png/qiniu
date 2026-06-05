@@ -228,6 +228,33 @@ textarea {
   margin-bottom: 14px;
 }
 
+.agent-chain {
+  border: 1px solid #e1e6ed;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.agent-chain article {
+  border-top: 1px solid #edf1f5;
+  padding: 8px 0;
+}
+
+.agent-chain article:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.agent-chain strong {
+  display: inline-block;
+  margin-right: 8px;
+}
+
+.agent-chain p {
+  margin: 4px 0 0;
+  color: #6d7b88;
+}
+
 .metric {
   border: 1px solid #e1e6ed;
   border-radius: 8px;

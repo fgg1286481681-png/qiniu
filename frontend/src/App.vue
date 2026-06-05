@@ -62,6 +62,20 @@
           </div>
         </div>
 
+        <div class="agent-chain">
+          <div class="panel-title small">
+            <h3>Agent 工作链</h3>
+          </div>
+          <article v-for="item in agentTrace" :key="item.agent">
+            <strong>{{ item.agent }}</strong>
+            <span :class="{ pass: item.status === 'success', warning: item.status === 'warning', danger: item.status === 'failed' }">
+              {{ item.status }}
+            </span>
+            <p>{{ item.summary }}</p>
+          </article>
+          <p v-if="!agentTrace.length" class="muted">生成后展示 Reader / Planner / Writer / Validator 执行结果</p>
+        </div>
+
         <div class="summary-grid">
           <div class="metric">
             <span>人物</span>
@@ -167,6 +181,7 @@ const validation = ref({});
 const tab = ref("characters");
 const parseMode = ref("");
 const parseWarning = ref("");
+const agentTrace = ref([]);
 const steps = ["章节解析", "信息抽取", "场景规划", "剧本生成", "Schema 校验"];
 const currentStep = ref("待开始");
 const doneSteps = ref([]);
@@ -198,10 +213,14 @@ function syncParseInfo(data) {
 
 async function analyzeText() {
   errorMessage.value = "";
-  const data = await postJson("/api/analyze", { text: novelText.value });
-  chapters.value = data.chapters;
-  chapterCount.value = data.chapter_count;
-  syncParseInfo(data);
+  try {
+    const data = await postJson("/api/analyze", { text: novelText.value });
+    chapters.value = data.chapters;
+    chapterCount.value = data.chapter_count;
+    syncParseInfo(data);
+  } catch (error) {
+    errorMessage.value = error.message;
+  }
 }
 
 function loadSample() {
@@ -223,6 +242,7 @@ async function generateScript() {
   script.value = {};
   yamlText.value = "";
   validation.value = {};
+  agentTrace.value = [];
   try {
     for (const step of steps) {
       currentStep.value = step;
@@ -233,6 +253,7 @@ async function generateScript() {
     script.value = data.script;
     yamlText.value = data.yaml;
     validation.value = data.validation;
+    agentTrace.value = data.agent_trace || [];
     syncParseInfo(data);
     chapters.value = data.script.chapters.map((item) => ({
       chapter_id: item.id,

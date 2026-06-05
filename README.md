@@ -4,6 +4,8 @@
 
 项目定位：将 3 个章节以上的小说文本自动转换为可校验、可编辑、可导出的 YAML 结构化剧本，并提供剧本 YAML Schema 设计文档。
 
+项目后端采用 Orchestrator + Reader/Planner/Writer/Validator Agent 工作链组织规则版生成流程。
+
 ## 第一版 Demo
 
 技术栈：
@@ -41,6 +43,7 @@ http://127.0.0.1:5173
 - 自动识别章节
 - 生成结构化 YAML 剧本
 - 展示人物表、场景表、改编总结
+- 展示 Reader / Planner / Writer / Validator Agent 工作链
 - 展示 Schema 校验结果
 - 复制和导出 YAML
 
