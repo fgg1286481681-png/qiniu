@@ -57,6 +57,7 @@
     "characters": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/character"
       }
@@ -64,6 +65,7 @@
     "locations": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/location"
       }
@@ -71,6 +73,7 @@
     "events": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/event"
       }
@@ -78,6 +81,7 @@
     "scenes": {
       "type": "array",
       "minItems": 1,
+      "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/scene"
       }
@@ -125,7 +129,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^chapter_[0-9]{3,}$"
         },
         "title": {
           "type": "string",
@@ -155,7 +159,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^char_[0-9]{3,}$"
         },
         "name": {
           "type": "string",
@@ -189,7 +193,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^loc_[0-9]{3,}$"
         },
         "name": {
           "type": "string",
@@ -214,7 +218,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^event_[0-9]{3,}$"
         },
         "source_chapter": {
           "type": "string",
@@ -231,6 +235,7 @@
         },
         "characters": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "string"
           }
@@ -252,11 +257,12 @@
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "pattern": "^scene_[0-9]{3,}$"
         },
         "source_chapters": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "type": "string"
           }
@@ -274,7 +280,15 @@
               "minLength": 1
             },
             "time_of_day": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "dawn",
+                "morning",
+                "day",
+                "afternoon",
+                "evening",
+                "night"
+              ]
             }
           }
         },
@@ -286,13 +300,14 @@
         },
         "characters": {
           "type": "array",
+          "uniqueItems": true,
           "items": {
             "type": "string"
           }
         },
         "elements": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 3,
           "items": {
             "$ref": "#/$defs/scene_element"
           }

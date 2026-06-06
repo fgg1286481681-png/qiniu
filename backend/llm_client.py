@@ -78,8 +78,13 @@ class LLMClient:
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
-                content = self._post_chat_completions(payload)
-                return parse_json_content(content)
+                response = self._post_chat_completions(payload)
+                return {
+                    "data": parse_json_content(response["content"]),
+                    "usage": response.get("usage"),
+                    "attempts": attempt + 1,
+                    "model": response.get("model") or model,
+                }
             except Exception as exc:
                 last_error = exc
                 if attempt >= self.max_retries:
@@ -111,7 +116,11 @@ class LLMClient:
             raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
 
         result = json.loads(body)
-        return result["choices"][0]["message"]["content"]
+        return {
+            "content": result["choices"][0]["message"]["content"],
+            "usage": result.get("usage"),
+            "model": result.get("model"),
+        }
 
 
 def parse_json_content(content):

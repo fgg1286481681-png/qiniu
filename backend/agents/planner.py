@@ -2,6 +2,7 @@ import json
 import re
 
 from llm_client import LLMClient, get_env
+from trace_utils import TraceTimer
 
 
 class PlannerAgent:
@@ -16,27 +17,42 @@ class PlannerAgent:
         if len(chapters) < 3:
             raise ValueError("至少需要 3 个章节以上的小说文本")
 
+        timer = TraceTimer(
+            self.name,
+            "planner",
+            getattr(self.provider, "model", None),
+        )
         source = "rule"
+        attempts = 0
+        usage = None
+        fallback_reason = None
         try:
             if self.provider:
-                plan = self.provider.plan(chapters)
+                provider_result = self.provider.plan(chapters)
+                plan = provider_result["plan"]
+                attempts = provider_result["attempts"]
+                usage = provider_result["usage"]
                 source = "llm"
             else:
                 plan = build_rule_plan(chapters)
         except Exception as exc:
             plan = build_rule_plan(chapters)
-            plan["warning"] = f"Planner AI 调用失败，已回退规则规划：{exc}"
+            fallback_reason = str(exc)
+            plan["warning"] = f"Planner AI 调用失败，已回退规则规划：{fallback_reason}"
 
         return {
             "plan": plan,
-            "trace": {
-                "agent": self.name,
-                "status": "success",
-                "summary": (
+            "trace": timer.finish(
+                status="degraded" if fallback_reason else "success",
+                source=source,
+                summary=(
                     f"规划出 {len(plan['characters'])} 个人物、"
                     f"{len(plan['locations'])} 个地点、{len(plan['events'])} 个事件，来源：{source}"
                 ),
-            },
+                attempts=attempts,
+                fallback_reason=fallback_reason,
+                usage=usage,
+            ),
         }
 
 
@@ -56,7 +72,7 @@ class PlannerLLMProvider:
         if not self.enabled:
             raise RuntimeError("Planner LLM 未配置")
 
-        result = self.client.chat_json(
+        response = self.client.chat_json(
             model=self.model,
             system_prompt=PLANNER_SYSTEM_PROMPT,
             user_prompt=build_planner_prompt(chapters),
@@ -64,7 +80,11 @@ class PlannerLLMProvider:
             top_p=self.top_p,
             max_tokens=self.max_tokens,
         )
-        return normalize_plan(result, chapters)
+        return {
+            "plan": normalize_plan(response["data"], chapters),
+            "usage": response["usage"],
+            "attempts": response["attempts"],
+        }
 
 
 def build_planner_provider():
@@ -277,4 +297,3 @@ def build_events(chapters, characters):
             }
         )
     return events
-

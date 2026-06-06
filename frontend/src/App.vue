@@ -5,7 +5,10 @@
         <h1>Novel2Script</h1>
         <p>AI 小说转 YAML 结构化剧本工具</p>
       </div>
-      <button class="primary" :disabled="!yamlText" @click="downloadYaml">导出 YAML</button>
+      <div class="topbar-actions">
+        <button @click="loadOfflineDemo">载入完整演示</button>
+        <button class="primary" :disabled="!yamlText" @click="downloadYaml">导出 YAML</button>
+      </div>
     </header>
 
     <main class="workspace">
@@ -57,21 +60,31 @@
         </div>
 
         <div class="progress">
-          <div v-for="step in steps" :key="step" :class="['step', { active: step === currentStep, done: doneSteps.includes(step) }]">
-            {{ step }}
+          <div v-for="step in steps" :key="step.key" :class="['step', { active: step.key === currentStepKey, done: progress >= step.doneAt }]">
+            {{ step.label }}
           </div>
+        </div>
+        <div v-if="loading" class="progress-meter">
+          <span :style="{ width: `${progress}%` }"></span>
         </div>
 
         <div class="agent-chain">
           <div class="panel-title small">
             <h3>Agent 工作链</h3>
           </div>
-          <article v-for="item in agentTrace" :key="item.agent">
+          <article v-for="(item, index) in agentTrace" :key="`${item.stage}-${index}`">
             <strong>{{ item.agent }}</strong>
-            <span :class="{ pass: item.status === 'success', warning: item.status === 'warning', danger: item.status === 'failed' }">
+            <span :class="{ pass: ['success', 'repaired'].includes(item.status), warning: item.status === 'degraded', danger: item.status === 'failed' }">
               {{ item.status }}
             </span>
             <p>{{ item.summary }}</p>
+            <small>
+              {{ item.source || "unknown" }}
+              <template v-if="item.model"> · {{ item.model }}</template>
+              · {{ formatDuration(item.duration_ms) }}
+              <template v-if="item.attempts"> · {{ item.attempts }} 次请求</template>
+            </small>
+            <p v-if="item.fallback_reason" class="warning">降级原因：{{ item.fallback_reason }}</p>
           </article>
           <p v-if="!agentTrace.length" class="muted">生成后展示 Reader / Planner / Writer / Validator 执行结果</p>
         </div>
@@ -91,10 +104,29 @@
           </div>
         </div>
 
+        <div class="quality-panel">
+          <div class="panel-title small">
+            <h3>质量指标</h3>
+            <span v-if="qualityMetrics.repair_triggered">已修复 {{ qualityMetrics.repair_count }} 轮</span>
+          </div>
+          <div class="quality-grid">
+            <div v-for="metric in qualityCards" :key="metric.label" class="quality-item">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+            </div>
+          </div>
+          <p v-if="qualityMetrics.ai_review?.score !== null && qualityMetrics.ai_review?.score !== undefined">
+            Validator AI 评分：<strong>{{ qualityMetrics.ai_review.score }}</strong>
+            · 高风险 {{ highIssueCount }} 项
+          </p>
+          <p v-else class="muted">AI 评分与规则指标分开展示，当前暂无 AI 评分。</p>
+        </div>
+
         <div class="tabs">
           <button :class="{ selected: tab === 'characters' }" @click="tab = 'characters'">人物表</button>
           <button :class="{ selected: tab === 'scenes' }" @click="tab = 'scenes'">场景表</button>
           <button :class="{ selected: tab === 'notes' }" @click="tab = 'notes'">改编总结</button>
+          <button :class="{ selected: tab === 'repairs' }" @click="tab = 'repairs'">修复记录</button>
         </div>
 
         <div class="content-list" v-if="tab === 'characters'">
@@ -107,12 +139,25 @@
         </div>
 
         <div class="content-list" v-if="tab === 'scenes'">
-          <article v-for="item in script.scenes || []" :key="item.id">
-            <strong>{{ item.id }}</strong>
-            <span>{{ item.heading?.time_of_day }}</span>
-            <p>{{ item.purpose }}</p>
-            <p class="muted">{{ item.conflict }}</p>
-          </article>
+          <details v-for="item in script.scenes || []" :key="item.id" class="scene-card" open>
+            <summary>
+              <strong>{{ item.id }} · {{ locationName(item.heading?.location_id) }}</strong>
+              <span>{{ item.heading?.time_of_day }}</span>
+            </summary>
+            <p><b>目的：</b>{{ item.purpose }}</p>
+            <p><b>冲突：</b>{{ item.conflict }}</p>
+            <p class="source-map">
+              来源章节：{{ item.source_chapters?.map(chapterName).join("、") }}
+            </p>
+            <div class="screenplay">
+              <div v-for="(element, index) in item.elements || []" :key="index" :class="['script-element', element.type]">
+                <strong v-if="element.type === 'dialogue'">{{ characterName(element.character_id) }}</strong>
+                <span class="element-type">{{ elementTypeLabel(element.type) }}</span>
+                <p>{{ element.text }}</p>
+                <small v-if="element.event_id">关联事件：{{ element.event_id }}</small>
+              </div>
+            </div>
+          </details>
           <p v-if="!script.scenes" class="muted">生成后展示场景表</p>
         </div>
 
@@ -126,6 +171,18 @@
             <p>{{ script.adaptation_notes.next_steps?.join("；") }}</p>
           </article>
           <p v-else class="muted">生成后展示改编总结</p>
+        </div>
+
+        <div class="content-list" v-if="tab === 'repairs'">
+          <article v-for="item in repairHistory" :key="item.round">
+            <strong>第 {{ item.round }} 轮修复</strong>
+            <span :class="{ pass: item.after_validation?.valid, danger: !item.after_validation?.valid }">
+              {{ item.after_validation?.valid ? "修复后通过" : "仍需修复" }}
+            </span>
+            <p>修复前问题：{{ item.before_validation?.errors?.length || 0 }} 项</p>
+            <p>修复后问题：{{ item.after_validation?.errors?.length || 0 }} 项</p>
+          </article>
+          <p v-if="!repairHistory.length" class="muted">本项目未触发自动修复</p>
         </div>
       </section>
 
@@ -162,7 +219,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 const sampleText = `第一章 初入会议室 林夏推开会议室的门，所有人的目光都落在她身上。她刚加入项目组，却被要求解释一个失败方案。周谨合上电脑，声音很低：“你知道这个问题拖了多久吗？”林夏握紧资料：“我知道，但我找到新的证据。”
 第二章 被质疑的方案
@@ -179,10 +236,14 @@ const errorMessage = ref("");
 const script = ref({});
 const yamlText = ref("");
 const validation = ref({});
+const qualityMetrics = ref({});
+const repairHistory = ref([]);
 const tab = ref("characters");
 const parseMode = ref("");
 const parseWarning = ref("");
 const agentTrace = ref([]);
+const progress = ref(0);
+const currentProjectId = ref("");
 const acceptedFileTypes = [
   ".txt",
   ".md",
@@ -207,15 +268,37 @@ const acceptedFileTypes = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/epub+zip",
 ].join(",");
-const steps = ["章节解析", "信息抽取", "场景规划", "剧本生成", "Schema 校验"];
+const steps = [
+  { key: "reader", label: "章节解析", doneAt: 30 },
+  { key: "planner", label: "信息抽取", doneAt: 50 },
+  { key: "writer", label: "剧本生成", doneAt: 70 },
+  { key: "validator", label: "质量校验", doneAt: 78 },
+  { key: "repair", label: "自动修复", doneAt: 92 },
+  { key: "metrics", label: "指标计算", doneAt: 100 },
+];
 const currentStep = ref("待开始");
-const doneSteps = ref([]);
+const currentStepKey = ref("");
 
 const wordCount = computed(() => novelText.value.trim().length);
 const validationLabel = computed(() => {
   if (validation.value.valid === true) return "校验通过";
   if (validation.value.valid === false) return "校验失败";
   return "待校验";
+});
+const qualityCards = computed(() => {
+  const metrics = qualityMetrics.value || {};
+  return [
+    { label: "章节覆盖", value: formatPercent(metrics.chapter_coverage) },
+    { label: "事件覆盖", value: formatPercent(metrics.event_coverage) },
+    { label: "对白占比", value: formatPercent(metrics.dialogue_ratio) },
+    { label: "引用一致", value: formatPercent(metrics.reference_consistency) },
+    { label: "场景完整", value: formatPercent(metrics.scene_completeness) },
+    { label: "Schema", value: metrics.schema_valid === true ? "通过" : metrics.schema_valid === false ? "失败" : "--" },
+  ];
+});
+const highIssueCount = computed(() => {
+  const counts = qualityMetrics.value?.ai_review?.severity_counts || {};
+  return (counts.high || 0) + (counts.critical || 0);
 });
 
 async function postJson(url, payload) {
@@ -229,6 +312,48 @@ async function postJson(url, payload) {
     throw new Error(data.error || "请求失败");
   }
   return data;
+}
+
+async function getJson(url) {
+  const response = await fetch(url);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "请求失败");
+  }
+  return data;
+}
+
+function formatPercent(value) {
+  return typeof value === "number" ? `${Math.round(value * 100)}%` : "--";
+}
+
+function formatDuration(value) {
+  if (typeof value !== "number") return "耗时未知";
+  if (value < 1000) return `${value} ms`;
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
+function characterName(id) {
+  return script.value.characters?.find((item) => item.id === id)?.name || id || "未知人物";
+}
+
+function locationName(id) {
+  return script.value.locations?.find((item) => item.id === id)?.name || id || "未知地点";
+}
+
+function chapterName(id) {
+  return script.value.chapters?.find((item) => item.id === id)?.title || id;
+}
+
+function elementTypeLabel(type) {
+  return {
+    action: "动作",
+    dialogue: "对白",
+    narration: "旁白",
+    transition: "转场",
+    sound: "声音",
+    shot: "镜头",
+  }[type] || type;
 }
 
 function syncParseInfo(data) {
@@ -383,38 +508,92 @@ async function handleFile(event) {
 async function generateScript() {
   loading.value = true;
   errorMessage.value = "";
-  doneSteps.value = [];
+  progress.value = 0;
   script.value = {};
   yamlText.value = "";
   validation.value = {};
+  qualityMetrics.value = {};
   agentTrace.value = [];
   try {
-    for (const step of steps) {
-      currentStep.value = step;
-      await new Promise((resolve) => setTimeout(resolve, 180));
-      doneSteps.value.push(step);
-    }
-    const data = await postJson("/api/generate", {
+    currentStep.value = "任务排队";
+    currentStepKey.value = "queued";
+    const data = await postJson("/api/generate-async", {
       title: title.value,
       text: novelText.value,
       source_filename: sourceFilename.value || null,
     });
-    script.value = data.script;
-    yamlText.value = data.yaml;
-    validation.value = data.validation;
-    agentTrace.value = data.agent_trace || [];
-    syncParseInfo(data);
-    chapters.value = data.script.chapters.map((item) => ({
-      chapter_id: item.id,
-      title: item.title,
-      order: item.order,
-      word_count: item.word_count,
-    }));
-    chapterCount.value = chapters.value.length;
-    currentStep.value = "完成";
+    currentProjectId.value = data.project_id;
+    localStorage.setItem("novel2script.activeProjectId", data.project_id);
+    await pollProject(data.project_id);
   } catch (error) {
     errorMessage.value = error.message;
     currentStep.value = "失败";
+    currentStepKey.value = "failed";
+    loading.value = false;
+    localStorage.removeItem("novel2script.activeProjectId");
+  }
+}
+
+function applyProject(data) {
+  title.value = data.title || title.value;
+  sourceFilename.value = data.source_filename || "";
+  if (data.source_text) novelText.value = data.source_text;
+  script.value = data.script || {};
+  yamlText.value = data.yaml || "";
+  validation.value = data.validation || {};
+  qualityMetrics.value = data.quality_metrics || {};
+  repairHistory.value = data.repair_history || [];
+  agentTrace.value = data.agent_trace || [];
+  syncParseInfo(data);
+  chapters.value = (data.script?.chapters || []).map((item) => ({
+    chapter_id: item.id,
+    title: item.title,
+    order: item.order,
+    word_count: item.word_count,
+  }));
+  chapterCount.value = chapters.value.length;
+  progress.value = data.progress || 0;
+  currentStepKey.value = data.current_step || "";
+  currentStep.value = stepLabel(data.current_step, data.status);
+}
+
+function stepLabel(step, status) {
+  if (["completed", "completed_with_warnings"].includes(status)) {
+    return status === "completed" ? "完成" : "完成（有警告）";
+  }
+  if (status === "failed") return "失败";
+  if (status === "interrupted") return "任务已中断";
+  return steps.find((item) => item.key === step)?.label || (step === "queued" ? "任务排队" : "处理中");
+}
+
+async function pollProject(projectId) {
+  while (true) {
+    const data = await getJson(`/api/projects/${projectId}`);
+    applyProject(data);
+    if (["completed", "completed_with_warnings", "failed", "interrupted"].includes(data.status)) {
+      loading.value = false;
+      localStorage.removeItem("novel2script.activeProjectId");
+      if (data.status === "failed") {
+        throw new Error(data.error_message || "生成失败");
+      }
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+async function loadOfflineDemo() {
+  loading.value = true;
+  errorMessage.value = "";
+  try {
+    const data = await postJson("/api/demo/import", {});
+    currentProjectId.value = data.id;
+    applyProject(data);
+    currentStep.value = "离线演示已载入";
+    currentStepKey.value = "completed";
+    progress.value = 100;
+  } catch (error) {
+    errorMessage.value = error.message;
   } finally {
     loading.value = false;
   }
@@ -422,10 +601,15 @@ async function generateScript() {
 
 async function validateCurrent() {
   errorMessage.value = "";
-  const data = await postJson("/api/validate", { yaml: yamlText.value });
-  validation.value = data;
-  if (data.script) {
-    script.value = data.script;
+  try {
+    const data = await postJson("/api/validate", { yaml: yamlText.value });
+    validation.value = data;
+    qualityMetrics.value = data.quality_metrics || qualityMetrics.value;
+    if (data.script) {
+      script.value = data.script;
+    }
+  } catch (error) {
+    errorMessage.value = error.message;
   }
 }
 
@@ -442,4 +626,17 @@ function downloadYaml() {
   anchor.click();
   URL.revokeObjectURL(url);
 }
+
+onMounted(async () => {
+  const activeProjectId = localStorage.getItem("novel2script.activeProjectId");
+  if (!activeProjectId) return;
+  loading.value = true;
+  currentProjectId.value = activeProjectId;
+  try {
+    await pollProject(activeProjectId);
+  } catch (error) {
+    errorMessage.value = error.message;
+    loading.value = false;
+  }
+});
 </script>

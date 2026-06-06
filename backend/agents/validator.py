@@ -5,6 +5,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from llm_client import LLMClient, get_env
+from trace_utils import TraceTimer
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -20,25 +21,39 @@ class ValidatorAgent:
         self.provider = provider or build_validator_provider()
 
     def run(self, script):
+        timer = TraceTimer(
+            self.name,
+            "validator",
+            getattr(self.provider, "model", None),
+        )
         validation = validate_script(script)
         source = "rule"
+        attempts = 0
+        usage = None
+        fallback_reason = None
 
         if validation["valid"] and self.provider:
             try:
-                ai_review = self.provider.review(script)
+                provider_result = self.provider.review(script)
+                ai_review = provider_result["review"]
+                attempts = provider_result["attempts"]
+                usage = provider_result["usage"]
                 validation["ai_review"] = ai_review
                 source = "llm"
             except Exception as exc:
+                fallback_reason = str(exc)
                 validation["ai_review"] = {
                     "score": None,
                     "issues": [],
                     "requires_rewrite": False,
-                    "error": str(exc),
+                    "error": fallback_reason,
                 }
 
         ai_review = validation.get("ai_review") or {}
         requires_rewrite = bool(ai_review.get("requires_rewrite"))
-        status = "warning" if not validation["valid"] or requires_rewrite else "success"
+        status = "degraded" if fallback_reason else "success"
+        if not validation["valid"] or requires_rewrite:
+            status = "failed"
 
         if not validation["valid"]:
             summary = f"发现 {len(validation['errors'])} 个 Schema 或引用问题"
@@ -50,11 +65,14 @@ class ValidatorAgent:
 
         return {
             "validation": validation,
-            "trace": {
-                "agent": self.name,
-                "status": status,
-                "summary": summary,
-            },
+            "trace": timer.finish(
+                status=status,
+                source=source,
+                summary=summary,
+                attempts=attempts,
+                fallback_reason=fallback_reason,
+                usage=usage,
+            ),
         }
 
 
@@ -74,7 +92,7 @@ class ValidatorLLMProvider:
         if not self.enabled:
             raise RuntimeError("Validator LLM 未配置")
 
-        result = self.client.chat_json(
+        response = self.client.chat_json(
             model=self.model,
             system_prompt=VALIDATOR_SYSTEM_PROMPT,
             user_prompt=json.dumps(script, ensure_ascii=False),
@@ -82,7 +100,11 @@ class ValidatorLLMProvider:
             top_p=self.top_p,
             max_tokens=self.max_tokens,
         )
-        return normalize_ai_review(result)
+        return {
+            "review": normalize_ai_review(response["data"]),
+            "usage": response["usage"],
+            "attempts": response["attempts"],
+        }
 
 
 def build_validator_provider():
@@ -209,6 +231,22 @@ def business_errors(script):
     chapter_ids = {item.get("id") for item in script.get("chapters", []) if isinstance(item, dict)}
     event_ids = {item.get("id") for item in script.get("events", []) if isinstance(item, dict)}
 
+    for collection_name in ["chapters", "characters", "locations", "events", "scenes"]:
+        ids = [
+            item.get("id")
+            for item in script.get(collection_name, [])
+            if isinstance(item, dict)
+        ]
+        duplicates = sorted({item for item in ids if item and ids.count(item) > 1})
+        for duplicate in duplicates:
+            errors.append(
+                {
+                    "path": collection_name,
+                    "message": f"存在重复 ID：{duplicate}",
+                    "suggestion": "确保同类对象的 id 唯一。",
+                }
+            )
+
     for event_index, event in enumerate(script.get("events", [])):
         if event.get("source_chapter") not in chapter_ids:
             errors.append(
@@ -284,4 +322,3 @@ def validate_script(script):
         "errors": errors,
         "script": script if len(errors) == 0 else None,
     }
-

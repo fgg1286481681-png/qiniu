@@ -1,6 +1,7 @@
 import re
 
 from llm_client import LLMClient, get_env
+from trace_utils import TraceTimer
 
 
 class ReaderAgent:
@@ -12,24 +13,39 @@ class ReaderAgent:
         self.provider = provider or build_reader_provider()
 
     def run(self, text):
+        timer = TraceTimer(
+            self.name,
+            "reader",
+            getattr(self.provider, "model", None),
+        )
         source = "rule"
+        attempts = 0
+        usage = None
+        fallback_reason = None
         try:
             if self.provider:
-                parse_result = self.provider.parse(text)
+                provider_result = self.provider.parse(text)
+                parse_result = provider_result["parse_result"]
+                attempts = provider_result["attempts"]
+                usage = provider_result["usage"]
                 source = "llm"
             else:
                 parse_result = parse_chapters(text)
         except Exception as exc:
             parse_result = parse_chapters(text)
-            parse_result["warning"] = f"Reader AI 调用失败，已回退规则解析：{exc}"
+            fallback_reason = str(exc)
+            parse_result["warning"] = f"Reader AI 调用失败，已回退规则解析：{fallback_reason}"
 
         return {
             "parse_result": parse_result,
-            "trace": {
-                "agent": self.name,
-                "status": "success",
-                "summary": f"识别到 {len(parse_result['chapters'])} 个章节，解析模式：{parse_result['mode']}，来源：{source}",
-            },
+            "trace": timer.finish(
+                status="degraded" if fallback_reason else "success",
+                source=source,
+                summary=f"识别到 {len(parse_result['chapters'])} 个章节，解析模式：{parse_result['mode']}，来源：{source}",
+                attempts=attempts,
+                fallback_reason=fallback_reason,
+                usage=usage,
+            ),
         }
 
 
@@ -50,7 +66,7 @@ class ReaderLLMProvider:
             raise RuntimeError("Reader LLM 未配置")
 
         paragraphs = split_paragraphs(text)
-        result = self.client.chat_json(
+        response = self.client.chat_json(
             model=self.model,
             system_prompt=READER_SYSTEM_PROMPT,
             user_prompt=build_reader_user_prompt(paragraphs),
@@ -58,7 +74,11 @@ class ReaderLLMProvider:
             top_p=self.top_p,
             max_tokens=self.max_tokens,
         )
-        return normalize_llm_parse_result(result, paragraphs)
+        return {
+            "parse_result": normalize_llm_parse_result(response["data"], paragraphs),
+            "usage": response["usage"],
+            "attempts": response["attempts"],
+        }
 
 
 def build_reader_provider():

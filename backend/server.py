@@ -1,5 +1,6 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 
@@ -7,13 +8,18 @@ from jsonschema.exceptions import ValidationError
 
 from agents.reader import parse_chapters
 from agents.validator import parse_yaml_script, validate_script
+from demo_service import import_demo_project
 from orchestrator import generate_project
 from project_store import ProjectStore
+from quality_metrics import calculate_quality_metrics
+from trace_utils import utc_now
 
 
 HOST = "127.0.0.1"
 PORT = 8000
 PROJECT_STORE = ProjectStore()
+PROJECT_STORE.interrupt_processing_projects()
+TASK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="novel2script")
 
 
 def json_response(handler, status, payload):
@@ -42,6 +48,54 @@ def project_id_from_path(path):
         return None
     project_id = path[len(prefix) :].strip("/")
     return project_id or None
+
+
+def public_result(result):
+    return {key: value for key, value in result.items() if key != "_artifacts"}
+
+
+def run_generation(project_id, source_text, title):
+    def report_progress(step, progress, agent_trace):
+        trace = list(agent_trace)
+        if step in {"reader", "planner", "writer", "validator", "repair"}:
+            agent_names = {
+                "reader": "Reader Agent",
+                "planner": "Planner Agent",
+                "writer": "Writer Agent",
+                "validator": "Validator Agent",
+                "repair": "Writer Agent",
+            }
+            trace.append(
+                {
+                    "agent": agent_names[step],
+                    "stage": step,
+                    "status": "running",
+                    "source": "pending",
+                    "model": None,
+                    "started_at": utc_now(),
+                    "ended_at": None,
+                    "duration_ms": None,
+                    "attempts": 0,
+                    "fallback_reason": None,
+                    "usage": None,
+                    "summary": "正在执行",
+                }
+            )
+        PROJECT_STORE.update_progress(project_id, step, progress, trace)
+
+    try:
+        result = generate_project(
+            source_text,
+            title,
+            project_id=project_id,
+            progress_callback=report_progress,
+        )
+        artifacts = result["_artifacts"]
+        PROJECT_STORE.complete_project(project_id, result, artifacts)
+        return public_result(result)
+    except Exception as exc:
+        PROJECT_STORE.fail_project(project_id, exc)
+        raise
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -121,10 +175,35 @@ class AppHandler(BaseHTTPRequestHandler):
                     payload.get("source_filename"),
                 )
 
-                result = generate_project(source_text, title, project_id=project_id)
-                artifacts = result.pop("_artifacts")
-                PROJECT_STORE.complete_project(project_id, result, artifacts)
+                result = run_generation(project_id, source_text, title)
                 json_response(self, 200, result)
+                return
+
+            if path == "/api/generate-async":
+                source_text = payload.get("text", "")
+                title = payload.get("title") or "未命名小说"
+                project_id = str(uuid.uuid4())
+                PROJECT_STORE.create_project(
+                    project_id,
+                    title,
+                    source_text,
+                    payload.get("source_filename"),
+                )
+                TASK_EXECUTOR.submit(run_generation, project_id, source_text, title)
+                json_response(
+                    self,
+                    202,
+                    {
+                        "project_id": project_id,
+                        "status": "processing",
+                        "current_step": "queued",
+                    },
+                )
+                return
+
+            if path == "/api/demo/import":
+                project = import_demo_project(PROJECT_STORE)
+                json_response(self, 200, project)
                 return
 
             if path == "/api/validate":
@@ -136,7 +215,13 @@ class AppHandler(BaseHTTPRequestHandler):
                     if not isinstance(script, dict):
                         json_response(self, 400, {"error": "请传入 yaml 文本或 script 对象"})
                         return
-                json_response(self, 200, validate_script(script))
+                validation = validate_script(script)
+                response = dict(validation)
+                response["quality_metrics"] = calculate_quality_metrics(
+                    script,
+                    validation,
+                )
+                json_response(self, 200, response)
                 return
 
             json_response(self, 404, {"error": "接口不存在"})

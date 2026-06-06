@@ -1,9 +1,11 @@
 import json
+from copy import deepcopy
 import time
 
 import yaml
 
 from llm_client import LLMClient, get_env
+from trace_utils import TraceTimer
 
 
 class WriterAgent:
@@ -15,26 +17,81 @@ class WriterAgent:
         self.provider = provider or build_writer_provider()
 
     def run(self, plan, title="未命名小说"):
+        timer = TraceTimer(
+            self.name,
+            "writer",
+            getattr(self.provider, "model", None),
+        )
         source = "rule"
+        attempts = 0
+        usage = None
+        fallback_reason = None
         try:
             if self.provider:
-                script = self.provider.write(plan, title)
+                provider_result = self.provider.write(plan, title)
+                script = provider_result["script"]
+                attempts = provider_result["attempts"]
+                usage = provider_result["usage"]
                 source = "llm"
             else:
                 script = build_rule_script(plan, title)
         except Exception as exc:
+            fallback_reason = str(exc)
             script = build_rule_script(plan, title)
-            script["adaptation_notes"]["next_steps"].append(f"Writer AI 调用失败，已回退规则生成：{exc}")
+            script["adaptation_notes"]["next_steps"].append(
+                f"Writer AI 调用失败，已回退规则生成：{fallback_reason}"
+            )
 
         yaml_text = dump_script_yaml(script)
         return {
             "script": script,
             "yaml": yaml_text,
-            "trace": {
-                "agent": self.name,
-                "status": "success",
-                "summary": f"生成 {len(script['scenes'])} 个场景并导出 YAML，来源：{source}",
-            },
+            "trace": timer.finish(
+                status="degraded" if fallback_reason else "success",
+                source=source,
+                summary=f"生成 {len(script['scenes'])} 个场景并导出 YAML，来源：{source}",
+                attempts=attempts,
+                fallback_reason=fallback_reason,
+                usage=usage,
+            ),
+        }
+
+    def repair(self, script, plan, validation, round_number):
+        timer = TraceTimer(
+            self.name,
+            "repair",
+            getattr(self.provider, "model", None),
+        )
+        source = "rule"
+        attempts = 0
+        usage = None
+        fallback_reason = None
+        repaired = None
+
+        try:
+            if self.provider:
+                provider_result = self.provider.repair(script, plan, validation)
+                repaired = provider_result["script"]
+                attempts = provider_result["attempts"]
+                usage = provider_result["usage"]
+                source = "llm"
+        except Exception as exc:
+            fallback_reason = str(exc)
+
+        if repaired is None:
+            repaired = repair_script_rules(script, plan)
+
+        return {
+            "script": repaired,
+            "yaml": dump_script_yaml(repaired),
+            "trace": timer.finish(
+                status="repaired" if not fallback_reason else "degraded",
+                source=source,
+                summary=f"完成第 {round_number} 轮局部修复，来源：{source}",
+                attempts=attempts,
+                fallback_reason=fallback_reason,
+                usage=usage,
+            ),
         }
 
 
@@ -56,7 +113,7 @@ class WriterLLMProvider:
         if not self.enabled:
             raise RuntimeError("Writer LLM 未配置")
 
-        result = self.client.chat_json(
+        response = self.client.chat_json(
             model=self.model,
             system_prompt=WRITER_SYSTEM_PROMPT,
             user_prompt=build_writer_prompt(plan, title),
@@ -66,7 +123,45 @@ class WriterLLMProvider:
             presence_penalty=self.presence_penalty,
             frequency_penalty=self.frequency_penalty,
         )
-        return normalize_script(result, plan, title)
+        return {
+            "script": normalize_script(response["data"], plan, title),
+            "usage": response["usage"],
+            "attempts": response["attempts"],
+        }
+
+    def repair(self, script, plan, validation):
+        if not self.enabled:
+            raise RuntimeError("Writer LLM 未配置")
+
+        response = self.client.chat_json(
+            model=self.model,
+            system_prompt=WRITER_REPAIR_SYSTEM_PROMPT,
+            user_prompt=json.dumps(
+                {
+                    "script": script,
+                    "planner_facts": {
+                        "characters": plan["characters"],
+                        "locations": plan["locations"],
+                        "events": plan["events"],
+                    },
+                    "validation": validation,
+                },
+                ensure_ascii=False,
+            ),
+            temperature=0.2,
+            top_p=0.9,
+            max_tokens=self.max_tokens,
+        )
+        repaired = normalize_script(
+            response["data"],
+            plan,
+            script.get("metadata", {}).get("title", "未命名小说"),
+        )
+        return {
+            "script": repaired,
+            "usage": response["usage"],
+            "attempts": response["attempts"],
+        }
 
 
 def build_writer_provider():
@@ -105,6 +200,16 @@ WRITER_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Agent。
 
 scene element type 只能是 action、dialogue、narration、transition、sound、shot。
 每个场景至少 3 个 elements；dialogue 必须引用存在的 character_id；地点必须引用存在的 location_id。
+每个 Planner 事件至少应在一个场景元素中通过 event_id 标记，便于验证事件覆盖率。
+"""
+
+
+WRITER_REPAIR_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Repair Agent。
+输入包含当前剧本、Planner 事实层和 Validator 问题。
+只修改 Validator 指出的场景及为修复引用错误所必需的字段，不得改变主线事实。
+保持未涉及场景的内容不变。所有 ID 必须引用 Planner 事实层已有对象。
+每个场景至少包含 3 个可拍摄元素。
+只输出严格 JSON，结构与 Writer Agent 的 scenes 和 adaptation_notes 输出一致。
 """
 
 
@@ -237,6 +342,46 @@ def build_rule_script(plan, title):
     )
 
 
+def repair_script_rules(script, plan):
+    repaired = deepcopy(script)
+    character_ids = {item["id"] for item in plan["characters"]}
+    location_ids = {item["id"] for item in plan["locations"]}
+    chapter_ids = {item["chapter_id"] for item in plan["chapters"]}
+    event_ids = {item["id"] for item in plan["events"]}
+    default_character = plan["characters"][0]["id"]
+    default_location = plan["locations"][0]["id"]
+    default_chapter = plan["chapters"][0]["chapter_id"]
+
+    for scene in repaired.get("scenes", []):
+        heading = scene.setdefault("heading", {})
+        if heading.get("location_id") not in location_ids:
+            heading["location_id"] = default_location
+        if heading.get("time_of_day") not in {"dawn", "morning", "day", "afternoon", "evening", "night"}:
+            heading["time_of_day"] = "day"
+
+        scene["source_chapters"] = [
+            item for item in scene.get("source_chapters", []) if item in chapter_ids
+        ] or [default_chapter]
+        scene["characters"] = [
+            item for item in scene.get("characters", []) if item in character_ids
+        ] or [default_character]
+
+        elements = []
+        for element in scene.get("elements", []):
+            if not isinstance(element, dict) or not str(element.get("text") or "").strip():
+                continue
+            item = deepcopy(element)
+            if item.get("type") == "dialogue" and item.get("character_id") not in character_ids:
+                item["character_id"] = scene["characters"][0]
+            if item.get("event_id") not in event_ids:
+                item.pop("event_id", None)
+            elements.append(item)
+        while len(elements) < 3:
+            elements.append({"type": "action", "text": "人物根据当前冲突继续推进场景行动。"})
+        scene["elements"] = elements
+    return repaired
+
+
 def build_scenes(chapters, characters, locations, events):
     scenes = []
     for index, event in enumerate(events):
@@ -260,7 +405,11 @@ def build_scenes(chapters, characters, locations, events):
                 "conflict": event["conflict"],
                 "characters": scene_characters,
                 "elements": [
-                    {"type": "action", "text": f"{location['name']}里，人物围绕新的矛盾展开行动。"},
+                    {
+                        "type": "action",
+                        "text": f"{location['name']}里，人物围绕新的矛盾展开行动。",
+                        "event_id": event["id"],
+                    },
                     {"type": "dialogue", "character_id": protagonist, "text": "这件事不能再拖下去了。"},
                     {"type": "dialogue", "character_id": opponent, "text": "你确定自己承担得起后果吗？"},
                     {"type": "narration", "text": event["emotional_shift"]},
@@ -304,4 +453,3 @@ def build_script(title, chapters, characters, locations, events, scenes, notes=N
 
 def dump_script_yaml(script):
     return yaml.safe_dump(script, allow_unicode=True, sort_keys=False, indent=2)
-

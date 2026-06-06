@@ -4,15 +4,15 @@
 
 项目定位：将 3 个章节以上的小说文本自动转换为可校验、可编辑、可导出的 YAML 结构化剧本，并提供剧本 YAML Schema 设计文档。
 
-项目后端采用 Orchestrator + Reader/Planner/Writer/Validator Agent 工作链组织规则版生成流程。
+项目后端采用 Orchestrator + Reader/Planner/Writer/Validator Agent 工作链，支持真实模型调用、规则降级、自动修复和质量评估。
 
-## 第一版 Demo
+## 评审版 Demo
 
 技术栈：
 
 - 前端：Vue 3 + Vite
 - 后端：Python 标准库 HTTP 服务
-- 存储：本地内存
+- 存储：SQLite + 本地项目文件
 
 启动后端：
 
@@ -40,7 +40,7 @@ WRITER_MODEL=你的writer模型
 VALIDATOR_MODEL=你的validator模型
 ```
 
-当前版本的 Reader、Planner、Writer、Validator 均已接入真实 API 调用。任一 Agent 未配置或调用失败时，会自动回退到对应规则实现。
+当前版本的 Reader、Planner、Writer、Validator 均已接入真实 API 调用。任一 Agent 未配置或调用失败时，会回退到对应规则实现，并在 Agent Trace 中明确标记为 `degraded`。
 
 启动前端：
 
@@ -56,23 +56,40 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
-第一版 Demo 已支持：
+评审版 Demo 已支持：
 
 - 粘贴小说文本或上传 TXT、Markdown、HTML、DOCX、EPUB、PDF 等文件
-- 载入内置 3 章样例
+- 载入内置样例或原创完整离线演示项目
 - 自动识别章节
 - 生成结构化 YAML 剧本
-- 展示人物表、场景表、改编总结
-- 展示 Reader / Planner / Writer / Validator Agent 工作链
+- Validator 发现结构或高严重度质量问题后最多自动修复两轮
+- 展示人物表、完整场景正文、来源章节和改编总结
+- 展示真实 Agent 模型、来源、耗时、重试和降级原因
+- 展示章节覆盖率、事件覆盖率、对白占比、引用一致性和场景完整率
 - 展示 Schema 校验结果
+- 异步生成、真实进度轮询和刷新后任务恢复
 - 复制和导出 YAML
 
 项目持久化：
 
 - SQLite 数据库：`data\novel2script.db`
 - 项目文件目录：`data\projects\项目UUID\`
-- 自动保存：`source.txt`、`reader.json`、`planner.json`、`script.json`、`script.yaml`、`validation.json`、`agent_trace.json`
+- 自动保存：原文、Reader/Planner 中间结果、初始剧本、修复历史、最终 JSON/YAML、Validation、Quality Metrics 和 Agent Trace
 - 项目接口：`GET /api/projects`、`GET /api/projects/{id}`、`DELETE /api/projects/{id}`
+
+主要生成接口：
+
+- `POST /api/generate`：兼容同步生成
+- `POST /api/generate-async`：创建异步任务
+- `POST /api/demo/import`：幂等导入原创离线演示项目
+- `POST /api/validate`：校验用户编辑后的 YAML
+
+运行测试：
+
+```powershell
+cd E:\agent\七牛云
+py -m unittest discover -s tests -v
+```
 
 上传文件读取能力：
 

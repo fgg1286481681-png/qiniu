@@ -55,12 +55,33 @@ class ProjectStore:
                     parse_mode TEXT,
                     parse_warning TEXT,
                     error_message TEXT,
+                    current_step TEXT NOT NULL DEFAULT 'queued',
+                    progress INTEGER NOT NULL DEFAULT 0,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    repair_count INTEGER NOT NULL DEFAULT 0,
                     project_path TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            existing_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(projects)").fetchall()
+            }
+            migrations = {
+                "current_step": "TEXT NOT NULL DEFAULT 'queued'",
+                "progress": "INTEGER NOT NULL DEFAULT 0",
+                "started_at": "TEXT",
+                "finished_at": "TEXT",
+                "repair_count": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for column, definition in migrations.items():
+                if column not in existing_columns:
+                    connection.execute(
+                        f"ALTER TABLE projects ADD COLUMN {column} {definition}"
+                    )
 
     def create_project(self, project_id, title, source_text, source_filename=None):
         project_dir = self.project_dir(project_id)
@@ -76,14 +97,16 @@ class ProjectStore:
                 """
                 INSERT INTO projects (
                     id, title, status, source_filename, source_char_count,
+                    current_step, progress, started_at,
                     project_path, created_at, updated_at
-                ) VALUES (?, ?, 'processing', ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'processing', ?, ?, 'queued', 0, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
                     title or "未命名小说",
                     source_filename,
                     len(source_text),
+                    now,
                     stored_project_path,
                     now,
                     now,
@@ -100,13 +123,21 @@ class ProjectStore:
         self._write_text(project_dir / "script.yaml", result["yaml"])
         self._write_json(project_dir / "validation.json", result["validation"])
         self._write_json(project_dir / "agent_trace.json", result["agent_trace"])
+        self._write_json(project_dir / "quality_metrics.json", result["quality_metrics"])
+        self._write_json(project_dir / "initial_script.json", artifacts["initial_script"])
+        self._write_json(
+            project_dir / "initial_validation.json",
+            artifacts["initial_validation"],
+        )
+        self._write_json(project_dir / "repair_history.json", artifacts["repair_history"])
 
         script = result["script"]
+        status = result.get("final_status") or "completed"
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE projects SET
-                    status = 'completed',
+                    status = ?,
                     chapter_count = ?,
                     character_count = ?,
                     location_count = ?,
@@ -114,11 +145,16 @@ class ProjectStore:
                     scene_count = ?,
                     parse_mode = ?,
                     parse_warning = ?,
-                    error_message = NULL,
+                    error_message = ?,
+                    current_step = ?,
+                    progress = 100,
+                    repair_count = ?,
+                    finished_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
                 (
+                    status,
                     len(script.get("chapters", [])),
                     len(script.get("characters", [])),
                     len(script.get("locations", [])),
@@ -126,21 +162,58 @@ class ProjectStore:
                     len(script.get("scenes", [])),
                     result.get("parse_mode"),
                     result.get("parse_warning"),
+                    None if status != "failed" else "自动修复两轮后仍未通过结构校验",
+                    status,
+                    result.get("repair_count", 0),
+                    utc_now(),
                     utc_now(),
                     project_id,
                 ),
             )
 
-    def fail_project(self, project_id, error_message):
+    def update_progress(self, project_id, current_step, progress, agent_trace=None):
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE projects
-                SET status = 'failed', error_message = ?, updated_at = ?
+                SET current_step = ?, progress = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (str(error_message), utc_now(), project_id),
+                (current_step, progress, utc_now(), project_id),
             )
+        if agent_trace is not None:
+            self._write_json(
+                self.project_dir(project_id) / "agent_trace.json",
+                agent_trace,
+            )
+
+    def fail_project(self, project_id, error_message):
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE projects
+                SET status = 'failed', current_step = 'failed', progress = 100,
+                    error_message = ?, finished_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (str(error_message), now, now, project_id),
+            )
+
+    def interrupt_processing_projects(self):
+        now = utc_now()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE projects
+                SET status = 'interrupted', current_step = 'interrupted',
+                    error_message = '服务重启导致任务中断',
+                    finished_at = ?, updated_at = ?
+                WHERE status = 'processing'
+                """,
+                (now, now),
+            )
+        return cursor.rowcount
 
     def list_projects(self):
         with self._connect() as connection:
@@ -166,6 +239,18 @@ class ProjectStore:
         project["agent_trace"] = self._read_json(project_dir / "agent_trace.json")
         project["reader"] = self._read_json(project_dir / "reader.json")
         project["planner"] = self._read_json(project_dir / "planner.json")
+        project["quality_metrics"] = self._read_json(
+            project_dir / "quality_metrics.json"
+        )
+        project["initial_script"] = self._read_json(
+            project_dir / "initial_script.json"
+        )
+        project["initial_validation"] = self._read_json(
+            project_dir / "initial_validation.json"
+        )
+        project["repair_history"] = self._read_json(
+            project_dir / "repair_history.json"
+        )
         return project
 
     def delete_project(self, project_id):
