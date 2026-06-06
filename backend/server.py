@@ -1,17 +1,19 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 import json
+import uuid
 
 from jsonschema.exceptions import ValidationError
 
 from agents.reader import parse_chapters
 from agents.validator import parse_yaml_script, validate_script
 from orchestrator import generate_project
+from project_store import ProjectStore
 
 
 HOST = "127.0.0.1"
 PORT = 8000
-PROJECTS = {}
+PROJECT_STORE = ProjectStore()
 
 
 def json_response(handler, status, payload):
@@ -19,7 +21,7 @@ def json_response(handler, status, payload):
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers", "Content-Type")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
@@ -34,23 +36,55 @@ def read_json(handler):
     return json.loads(raw)
 
 
+def project_id_from_path(path):
+    prefix = "/api/projects/"
+    if not path.startswith(prefix):
+        return None
+    project_id = path[len(prefix) :].strip("/")
+    return project_id or None
+
+
 class AppHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/api/health":
-            json_response(self, 200, {"ok": True, "projects": len(PROJECTS)})
-        else:
+        try:
+            if path == "/api/health":
+                json_response(
+                    self,
+                    200,
+                    {"ok": True, "projects": PROJECT_STORE.count_projects()},
+                )
+                return
+
+            if path == "/api/projects":
+                json_response(self, 200, {"projects": PROJECT_STORE.list_projects()})
+                return
+
+            project_id = project_id_from_path(path)
+            if project_id:
+                project = PROJECT_STORE.get_project(project_id)
+                if project is None:
+                    json_response(self, 404, {"error": "项目不存在"})
+                else:
+                    json_response(self, 200, project)
+                return
+
             json_response(self, 404, {"error": "接口不存在"})
+        except ValueError as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except Exception as exc:
+            json_response(self, 500, {"error": f"服务异常：{exc}"})
 
     def do_POST(self):
         path = urlparse(self.path).path
+        project_id = None
         try:
             payload = read_json(self)
             if path == "/api/analyze":
@@ -74,19 +108,26 @@ class AppHandler(BaseHTTPRequestHandler):
                         "parse_warning": parse_result["warning"],
                     },
                 )
-            elif path == "/api/generate":
-                result = generate_project(
-                    payload.get("text", ""),
-                    payload.get("title", "未命名小说"),
+                return
+
+            if path == "/api/generate":
+                source_text = payload.get("text", "")
+                title = payload.get("title") or "未命名小说"
+                project_id = str(uuid.uuid4())
+                PROJECT_STORE.create_project(
+                    project_id,
+                    title,
+                    source_text,
+                    payload.get("source_filename"),
                 )
-                PROJECTS[result["project_id"]] = {
-                    "script": result["script"],
-                    "yaml": result["yaml"],
-                    "validation": result["validation"],
-                    "agent_trace": result["agent_trace"],
-                }
+
+                result = generate_project(source_text, title, project_id=project_id)
+                artifacts = result.pop("_artifacts")
+                PROJECT_STORE.complete_project(project_id, result, artifacts)
                 json_response(self, 200, result)
-            elif path == "/api/validate":
+                return
+
+            if path == "/api/validate":
                 yaml_text = payload.get("yaml")
                 if isinstance(yaml_text, str):
                     script = parse_yaml_script(yaml_text)
@@ -96,12 +137,40 @@ class AppHandler(BaseHTTPRequestHandler):
                         json_response(self, 400, {"error": "请传入 yaml 文本或 script 对象"})
                         return
                 json_response(self, 200, validate_script(script))
-            else:
+                return
+
+            json_response(self, 404, {"error": "接口不存在"})
+        except ValueError as exc:
+            if project_id:
+                PROJECT_STORE.fail_project(project_id, exc)
+            json_response(self, 400, {"error": str(exc), "project_id": project_id})
+        except ValidationError as exc:
+            if project_id:
+                PROJECT_STORE.fail_project(project_id, exc.message)
+            json_response(self, 400, {"error": exc.message, "project_id": project_id})
+        except Exception as exc:
+            if project_id:
+                PROJECT_STORE.fail_project(project_id, exc)
+            json_response(
+                self,
+                500,
+                {"error": f"服务异常：{exc}", "project_id": project_id},
+            )
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        try:
+            project_id = project_id_from_path(path)
+            if not project_id:
                 json_response(self, 404, {"error": "接口不存在"})
+                return
+
+            if PROJECT_STORE.delete_project(project_id):
+                json_response(self, 200, {"deleted": True, "project_id": project_id})
+            else:
+                json_response(self, 404, {"error": "项目不存在"})
         except ValueError as exc:
             json_response(self, 400, {"error": str(exc)})
-        except ValidationError as exc:
-            json_response(self, 400, {"error": exc.message})
         except Exception as exc:
             json_response(self, 500, {"error": f"服务异常：{exc}"})
 

@@ -67,6 +67,13 @@ http://127.0.0.1:5173
 - 展示 Schema 校验结果
 - 复制和导出 YAML
 
+项目持久化：
+
+- SQLite 数据库：`data\novel2script.db`
+- 项目文件目录：`data\projects\项目UUID\`
+- 自动保存：`source.txt`、`reader.json`、`planner.json`、`script.json`、`script.yaml`、`validation.json`、`agent_trace.json`
+- 项目接口：`GET /api/projects`、`GET /api/projects/{id}`、`DELETE /api/projects/{id}`
+
 上传文件读取能力：
 
 - 文本类：`.txt`、`.md`、`.markdown`、`.csv`、`.tsv`、`.json`、`.yaml`、`.yml`、`.html`、`.htm`、`.xml`、`.log`

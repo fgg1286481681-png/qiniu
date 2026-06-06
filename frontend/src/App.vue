@@ -171,6 +171,7 @@ const sampleText = `第一章 初入会议室 林夏推开会议室的门，所�
 
 const title = ref("示例小说改编");
 const novelText = ref("");
+const sourceFilename = ref("");
 const chapters = ref([]);
 const chapterCount = ref(0);
 const loading = ref(false);
@@ -248,6 +249,7 @@ async function analyzeText() {
 }
 
 function loadSample() {
+  sourceFilename.value = "";
   novelText.value = sampleText;
   analyzeText();
 }
@@ -370,6 +372,7 @@ async function handleFile(event) {
   if (!file) return;
   errorMessage.value = "";
   try {
+    sourceFilename.value = file.name;
     novelText.value = await readUploadedFile(file);
     await analyzeText();
   } catch (error) {
@@ -391,7 +394,11 @@ async function generateScript() {
       await new Promise((resolve) => setTimeout(resolve, 180));
       doneSteps.value.push(step);
     }
-    const data = await postJson("/api/generate", { title: title.value, text: novelText.value });
+    const data = await postJson("/api/generate", {
+      title: title.value,
+      text: novelText.value,
+      source_filename: sourceFilename.value || null,
+    });
     script.value = data.script;
     yamlText.value = data.yaml;
     validation.value = data.validation;

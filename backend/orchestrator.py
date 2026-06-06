@@ -13,7 +13,7 @@ class Orchestrator:
         self.writer = writer or WriterAgent()
         self.validator = validator or ValidatorAgent()
 
-    def generate(self, text, title="未命名小说"):
+    def generate(self, text, title="未命名小说", project_id=None):
         agent_trace = []
 
         reader_result = self.reader.run(text)
@@ -30,15 +30,19 @@ class Orchestrator:
         agent_trace.append(validator_result["trace"])
 
         return {
-            "project_id": str(uuid.uuid4()),
+            "project_id": project_id or str(uuid.uuid4()),
             "script": writer_result["script"],
             "yaml": writer_result["yaml"],
             "validation": validator_result["validation"],
             "parse_mode": parse_result["mode"],
             "parse_warning": parse_result["warning"],
             "agent_trace": agent_trace,
+            "_artifacts": {
+                "reader": parse_result,
+                "planner": planner_result["plan"],
+            },
         }
 
 
-def generate_project(text, title="未命名小说"):
-    return Orchestrator().generate(text, title)
+def generate_project(text, title="未命名小说", project_id=None):
+    return Orchestrator().generate(text, title, project_id=project_id)

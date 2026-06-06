@@ -8,6 +8,7 @@ build/
 .cache/
 .vite/
 .next/
+data/
 
 __pycache__/
 *.pyc
