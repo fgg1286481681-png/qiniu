@@ -228,11 +228,29 @@ function loadSample() {
   analyzeText();
 }
 
+function decodeTextFile(buffer) {
+  const encodings = ["utf-8", "gb18030", "gbk"];
+  for (const encoding of encodings) {
+    try {
+      return new TextDecoder(encoding, { fatal: true }).decode(buffer);
+    } catch {
+      // Try the next common Chinese text encoding.
+    }
+  }
+  return new TextDecoder("utf-8").decode(buffer);
+}
+
 async function handleFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  novelText.value = await file.text();
-  await analyzeText();
+  errorMessage.value = "";
+  try {
+    const buffer = await file.arrayBuffer();
+    novelText.value = decodeTextFile(buffer);
+    await analyzeText();
+  } catch (error) {
+    errorMessage.value = `读取 TXT 失败：${error.message}`;
+  }
 }
 
 async function generateScript() {
