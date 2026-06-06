@@ -23,3 +23,23 @@ py server.py
 - `DELETE /api/projects/{id}`
 
 异步任务在单进程 `ThreadPoolExecutor` 中执行，默认最多并发 2 个。服务重启后，未完成任务会标记为 `interrupted`。
+
+长文本处理：
+
+- Reader 按字符预算切分段落，逐块抽取章节、摘要、事件、人物和地点，再归并为统一章节序列。
+- Planner 按章节字符预算分批抽取事实层，最终统一去重人物、地点和事件。
+- Writer 按总输入预算动态分配每章摘录长度，并同时使用 Reader 摘要。
+
+项目历史：
+
+- `GET /api/projects` 返回项目元数据列表。
+- `GET /api/projects/{id}` 恢复原文、剧本、YAML、质量指标、Trace 和修复历史。
+- `DELETE /api/projects/{id}` 同步删除 SQLite 记录和本地项目目录。
+
+测试与评测：
+
+```powershell
+cd E:\agent\七牛云
+py -m unittest discover -s tests -v
+py scripts\evaluate.py
+```

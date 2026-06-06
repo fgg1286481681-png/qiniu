@@ -43,6 +43,89 @@ button:disabled {
   min-height: 100vh;
 }
 
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(20, 31, 42, 0.35);
+}
+
+.history-drawer {
+  width: min(440px, 100vw);
+  height: 100vh;
+  background: #ffffff;
+  border-left: 1px solid #c8d1dc;
+  padding: 18px;
+  overflow: auto;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e1e6ed;
+}
+
+.drawer-header h2,
+.drawer-header p {
+  margin: 0;
+}
+
+.drawer-header p {
+  margin-top: 4px;
+  color: #6d7b88;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  border: 1px solid #d7dde5;
+  padding: 12px;
+}
+
+.history-main {
+  min-width: 0;
+}
+
+.history-main strong {
+  display: block;
+  margin-bottom: 5px;
+  overflow-wrap: anywhere;
+}
+
+.history-main > span {
+  font-size: 13px;
+}
+
+.history-main p,
+.history-main small {
+  display: block;
+  margin: 5px 0 0;
+  color: #6d7b88;
+}
+
+.history-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.danger-button {
+  color: #b42318;
+  border-color: #e1aaa5;
+}
+
 .topbar {
   height: 76px;
   display: flex;
@@ -487,9 +570,22 @@ textarea {
 
   .topbar-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .topbar-actions button {
+    flex: 1 1 120px;
+  }
+
+  .history-item {
+    grid-template-columns: 1fr;
+  }
+
+  .history-actions {
+    flex-direction: row;
+  }
+
+  .history-actions button {
     flex: 1;
   }
 }

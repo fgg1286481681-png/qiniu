@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -15,8 +16,8 @@ os.environ["PLANNER_MODEL"] = ""
 os.environ["WRITER_MODEL"] = ""
 os.environ["VALIDATOR_MODEL"] = ""
 
-from agents.planner import build_rule_plan
-from agents.reader import ReaderAgent, parse_chapters
+from agents.planner import PlannerLLMProvider, build_rule_plan, chunk_chapters
+from agents.reader import ReaderAgent, ReaderLLMProvider, chunk_paragraphs, parse_chapters
 from agents.validator import ValidatorAgent, validate_script
 from agents.writer import build_rule_script, dump_script_yaml
 from demo_service import import_demo_project
@@ -48,6 +49,74 @@ class BrokenReaderProvider:
         raise RuntimeError("provider unavailable")
 
 
+class ReaderChunkClient:
+    enabled = True
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat_json(self, **kwargs):
+        self.calls += 1
+        paragraph_count = kwargs["user_prompt"].count("[段落 ")
+        return {
+            "data": {
+                "chapters": [
+                    {
+                        "title": f"分块 {self.calls}",
+                        "summary": "分块摘要",
+                        "paragraph_start": 1,
+                        "paragraph_end": paragraph_count,
+                        "key_events": ["事件"],
+                        "characters": ["林清"],
+                        "locations": ["车站"],
+                    }
+                ]
+            },
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "attempts": 1,
+            "model": "reader-test",
+        }
+
+
+class PlannerChunkClient:
+    enabled = True
+
+    def __init__(self):
+        self.calls = 0
+
+    def chat_json(self, **kwargs):
+        self.calls += 1
+        marker = "不要写剧本对白。\n"
+        chapters = json.loads(kwargs["user_prompt"].split(marker, 1)[1])
+        return {
+            "data": {
+                "characters": [
+                    {
+                        "name": "林清",
+                        "aliases": [],
+                        "role": "protagonist",
+                        "description": "调查者",
+                        "goal": "查明真相",
+                    }
+                ],
+                "locations": [{"name": "车站", "description": "旧车站"}],
+                "events": [
+                    {
+                        "source_chapter": chapter["chapter_id"],
+                        "summary": f"{chapter['title']}事件",
+                        "conflict": "是否公开",
+                        "emotional_shift": "从犹豫到坚定",
+                        "character_names": ["林清"],
+                    }
+                    for chapter in chapters
+                ],
+            },
+            "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+            "attempts": 1,
+            "model": "planner-test",
+        }
+
+
 class RepairingWriter:
     def __init__(self):
         self.repair_calls = 0
@@ -76,6 +145,44 @@ class RepairingWriter:
 
 
 class CoreTests(unittest.TestCase):
+    def test_reader_chunks_long_text_and_merges_usage(self):
+        paragraphs = [f"段落 {index} " + "内容" * 80 for index in range(6)]
+        client = ReaderChunkClient()
+        provider = ReaderLLMProvider(client=client, model="reader-test")
+        provider.chunk_chars = 400
+        result = provider.parse("\n\n".join(paragraphs))
+        self.assertGreater(result["parse_result"]["chunk_count"], 1)
+        self.assertEqual(
+            len(result["parse_result"]["chapters"]),
+            result["parse_result"]["chunk_count"],
+        )
+        self.assertEqual(
+            result["usage"]["prompt_tokens"],
+            result["parse_result"]["chunk_count"] * 10,
+        )
+
+    def test_planner_chunks_and_deduplicates_global_entities(self):
+        chapters = parse_chapters(SOURCE)["chapters"]
+        for chapter in chapters:
+            chapter["text"] *= 8
+        client = PlannerChunkClient()
+        provider = PlannerLLMProvider(client=client, model="planner-test")
+        provider.chunk_chars = 150
+        result = provider.plan(chapters)
+        self.assertGreater(result["chunk_count"], 1)
+        self.assertEqual(len(result["plan"]["characters"]), 1)
+        self.assertEqual(len(result["plan"]["locations"]), 1)
+        self.assertEqual(len(result["plan"]["events"]), len(chapters))
+
+    def test_chunk_helpers_respect_character_budget(self):
+        paragraph_chunks = chunk_paragraphs(["甲" * 50, "乙" * 50], 60)
+        self.assertEqual(len(paragraph_chunks), 2)
+        chapter_batches = chunk_chapters(
+            [{"text": "甲" * 50}, {"text": "乙" * 50}],
+            240,
+        )
+        self.assertEqual(len(chapter_batches), 2)
+
     def test_schema_requires_three_scene_elements(self):
         _, script = valid_script()
         script["scenes"][0]["elements"] = script["scenes"][0]["elements"][:2]

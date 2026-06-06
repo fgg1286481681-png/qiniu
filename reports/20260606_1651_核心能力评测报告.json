@@ -1,0 +1,104 @@
+{
+  "generated_at": "2026-06-06T16:51:59",
+  "mode": "offline_rule_baseline",
+  "summary": {
+    "case_count": 3,
+    "passed_count": 3,
+    "pass_rate": 1.0,
+    "schema_pass_rate": 1.0,
+    "average_chapter_coverage": 1.0,
+    "average_event_coverage": 1.0,
+    "average_reference_consistency": 1.0,
+    "average_scene_completeness": 1.0,
+    "average_duration_ms": 18
+  },
+  "cases": [
+    {
+      "id": "explicit_chapters",
+      "title": "明确章节标题",
+      "passed": true,
+      "duration_ms": 20,
+      "chapter_count": 3,
+      "scene_count": 3,
+      "parse_mode": "heading",
+      "quality_metrics": {
+        "chapter_coverage": 1.0,
+        "event_coverage": 1.0,
+        "dialogue_ratio": 0.5,
+        "reference_consistency": 1.0,
+        "scene_completeness": 1.0,
+        "schema_valid": true,
+        "ai_review": {
+          "score": null,
+          "severity_counts": {
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0
+          },
+          "requires_rewrite": false
+        },
+        "repair_triggered": false,
+        "repair_count": 0
+      }
+    },
+    {
+      "id": "inline_chapters",
+      "title": "行内章节正文",
+      "passed": true,
+      "duration_ms": 19,
+      "chapter_count": 3,
+      "scene_count": 3,
+      "parse_mode": "heading",
+      "quality_metrics": {
+        "chapter_coverage": 1.0,
+        "event_coverage": 1.0,
+        "dialogue_ratio": 0.5,
+        "reference_consistency": 1.0,
+        "scene_completeness": 1.0,
+        "schema_valid": true,
+        "ai_review": {
+          "score": null,
+          "severity_counts": {
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0
+          },
+          "requires_rewrite": false
+        },
+        "repair_triggered": false,
+        "repair_count": 0
+      }
+    },
+    {
+      "id": "paragraph_fallback",
+      "title": "无标题段落拆分",
+      "passed": true,
+      "duration_ms": 15,
+      "chapter_count": 3,
+      "scene_count": 3,
+      "parse_mode": "fallback",
+      "quality_metrics": {
+        "chapter_coverage": 1.0,
+        "event_coverage": 1.0,
+        "dialogue_ratio": 0.5,
+        "reference_consistency": 1.0,
+        "scene_completeness": 1.0,
+        "schema_valid": true,
+        "ai_review": {
+          "score": null,
+          "severity_counts": {
+            "critical": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0
+          },
+          "requires_rewrite": false
+        },
+        "repair_triggered": false,
+        "repair_count": 0
+      }
+    }
+  ]
+}

@@ -68,6 +68,8 @@ http://127.0.0.1:5173
 - 展示章节覆盖率、事件覆盖率、对白占比、引用一致性和场景完整率
 - 展示 Schema 校验结果
 - 异步生成、真实进度轮询和刷新后任务恢复
+- 长文本按段落和章节批次分块，Reader 摘要归并后交给 Planner/Writer
+- 历史项目列表、完整恢复和本地删除
 - 复制和导出 YAML
 
 项目持久化：
@@ -90,6 +92,21 @@ http://127.0.0.1:5173
 cd E:\agent\七牛云
 py -m unittest discover -s tests -v
 ```
+
+运行离线核心能力评测：
+
+```powershell
+cd E:\agent\七牛云
+py scripts\evaluate.py
+```
+
+评测结果保存到 `reports\日期_时间_核心能力评测报告.json`。该报告是无模型 API 的规则基线，用于验证章节处理、Schema、引用和覆盖率，不代表真实模型的主观剧本质量。
+
+长文本预算可通过 `.env` 调整：
+
+- `READER_CHUNK_CHARS`：Reader 单个段落批次字符数，默认 12000
+- `PLANNER_CHUNK_CHARS`：Planner 单个章节批次字符数，默认 14000
+- `WRITER_INPUT_CHARS`：Writer 章节摘录总字符预算，默认 18000
 
 上传文件读取能力：
 

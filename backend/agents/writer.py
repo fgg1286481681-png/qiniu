@@ -104,6 +104,7 @@ class WriterLLMProvider:
         self.max_tokens = int(get_env("WRITER_MAX_TOKENS", "8000"))
         self.presence_penalty = float(get_env("WRITER_PRESENCE_PENALTY", "0.2"))
         self.frequency_penalty = float(get_env("WRITER_FREQUENCY_PENALTY", "0.3"))
+        self.input_chars = int(get_env("WRITER_INPUT_CHARS", "18000"))
 
     @property
     def enabled(self):
@@ -116,7 +117,7 @@ class WriterLLMProvider:
         response = self.client.chat_json(
             model=self.model,
             system_prompt=WRITER_SYSTEM_PROMPT,
-            user_prompt=build_writer_prompt(plan, title),
+            user_prompt=build_writer_prompt(plan, title, self.input_chars),
             temperature=self.temperature,
             top_p=self.top_p,
             max_tokens=self.max_tokens,
@@ -213,14 +214,17 @@ WRITER_REPAIR_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Repair Agent。
 """
 
 
-def build_writer_prompt(plan, title):
+def build_writer_prompt(plan, title, max_input_chars=18000):
     chapter_excerpts = []
+    chapter_count = max(1, len(plan["chapters"]))
+    excerpt_chars = max(240, min(1800, max_input_chars // chapter_count))
     for chapter in plan["chapters"]:
         chapter_excerpts.append(
             {
                 "id": chapter["chapter_id"],
                 "title": chapter["title"],
-                "excerpt": chapter["text"][:1800],
+                "summary": chapter.get("summary", ""),
+                "excerpt": chapter["text"][:excerpt_chars],
             }
         )
 

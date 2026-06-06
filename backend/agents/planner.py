@@ -26,12 +26,14 @@ class PlannerAgent:
         attempts = 0
         usage = None
         fallback_reason = None
+        chunk_count = 1
         try:
             if self.provider:
                 provider_result = self.provider.plan(chapters)
                 plan = provider_result["plan"]
                 attempts = provider_result["attempts"]
                 usage = provider_result["usage"]
+                chunk_count = provider_result.get("chunk_count", 1)
                 source = "llm"
             else:
                 plan = build_rule_plan(chapters)
@@ -47,7 +49,8 @@ class PlannerAgent:
                 source=source,
                 summary=(
                     f"规划出 {len(plan['characters'])} 个人物、"
-                    f"{len(plan['locations'])} 个地点、{len(plan['events'])} 个事件，来源：{source}"
+                    f"{len(plan['locations'])} 个地点、{len(plan['events'])} 个事件，"
+                    f"处理 {chunk_count} 个章节批次，来源：{source}"
                 ),
                 attempts=attempts,
                 fallback_reason=fallback_reason,
@@ -63,6 +66,7 @@ class PlannerLLMProvider:
         self.temperature = float(get_env("PLANNER_TEMPERATURE", "0.3"))
         self.top_p = float(get_env("PLANNER_TOP_P", "0.95"))
         self.max_tokens = int(get_env("PLANNER_MAX_TOKENS", "8000"))
+        self.chunk_chars = int(get_env("PLANNER_CHUNK_CHARS", "14000"))
 
     @property
     def enabled(self):
@@ -72,18 +76,34 @@ class PlannerLLMProvider:
         if not self.enabled:
             raise RuntimeError("Planner LLM 未配置")
 
-        response = self.client.chat_json(
-            model=self.model,
-            system_prompt=PLANNER_SYSTEM_PROMPT,
-            user_prompt=build_planner_prompt(chapters),
-            temperature=self.temperature,
-            top_p=self.top_p,
-            max_tokens=self.max_tokens,
-        )
+        chapter_batches = chunk_chapters(chapters, self.chunk_chars)
+        raw_results = []
+        usage_items = []
+        total_attempts = 0
+        for batch_index, batch in enumerate(chapter_batches, start=1):
+            response = self.client.chat_json(
+                model=self.model,
+                system_prompt=PLANNER_SYSTEM_PROMPT,
+                user_prompt=build_planner_prompt(
+                    batch,
+                    batch_index=batch_index,
+                    batch_count=len(chapter_batches),
+                ),
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.max_tokens,
+            )
+            raw_results.append(response["data"])
+            total_attempts += response["attempts"]
+            if response["usage"]:
+                usage_items.append(response["usage"])
+
+        merged_result = merge_planner_results(raw_results)
         return {
-            "plan": normalize_plan(response["data"], chapters),
-            "usage": response["usage"],
-            "attempts": response["attempts"],
+            "plan": normalize_plan(merged_result, chapters),
+            "usage": merge_usage(usage_items),
+            "attempts": total_attempts,
+            "chunk_count": len(chapter_batches),
         }
 
 
@@ -123,20 +143,102 @@ PLANNER_SYSTEM_PROMPT = """你是 Novel2Script 的 Planner Agent。
 """
 
 
-def build_planner_prompt(chapters):
+def chunk_chapters(chapters, max_chars):
+    batches = []
+    current = []
+    current_chars = 0
+    for chapter in chapters:
+        chapter_chars = len(chapter.get("text", "")) + 200
+        if current and current_chars + chapter_chars > max_chars:
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(chapter)
+        current_chars += chapter_chars
+    if current:
+        batches.append(current)
+    return batches
+
+
+def build_planner_prompt(chapters, batch_index=1, batch_count=1):
     payload = [
         {
             "chapter_id": chapter["chapter_id"],
             "title": chapter["title"],
             "text": chapter["text"],
+            "reader_summary": chapter.get("summary", ""),
         }
         for chapter in chapters
     ]
     return (
+        f"这是第 {batch_index}/{batch_count} 个章节批次。"
         "请根据以下章节生成剧本改编事实层。每个章节至少提取一个关键事件；"
         "人物、地点应去重；不要写剧本对白。\n"
         + json.dumps(payload, ensure_ascii=False)
     )
+
+
+def merge_planner_results(results):
+    merged = {"characters": [], "locations": [], "events": []}
+    characters_by_name = {}
+    locations_by_name = {}
+    seen_events = set()
+
+    for result in results:
+        for item in result.get("characters") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            existing = characters_by_name.get(name)
+            if existing is None:
+                existing = dict(item)
+                existing["aliases"] = list(item.get("aliases") or [])
+                characters_by_name[name] = existing
+                merged["characters"].append(existing)
+            else:
+                aliases = list(existing.get("aliases") or [])
+                for alias in item.get("aliases") or []:
+                    if alias not in aliases:
+                        aliases.append(alias)
+                existing["aliases"] = aliases
+                for field in ["description", "goal"]:
+                    if len(str(item.get(field) or "")) > len(str(existing.get(field) or "")):
+                        existing[field] = item[field]
+
+        for item in result.get("locations") or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            if name not in locations_by_name:
+                locations_by_name[name] = dict(item)
+                merged["locations"].append(locations_by_name[name])
+
+        for item in result.get("events") or []:
+            if not isinstance(item, dict):
+                continue
+            key = (
+                str(item.get("source_chapter") or ""),
+                str(item.get("summary") or ""),
+            )
+            if key not in seen_events:
+                seen_events.add(key)
+                merged["events"].append(dict(item))
+    return merged
+
+
+def merge_usage(items):
+    if not items:
+        return None
+    merged = {}
+    for item in items:
+        for key, value in item.items():
+            if isinstance(value, (int, float)):
+                merged[key] = merged.get(key, 0) + value
+    return merged or None
 
 
 def normalize_plan(result, chapters):

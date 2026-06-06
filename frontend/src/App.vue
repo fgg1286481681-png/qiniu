@@ -6,6 +6,7 @@
         <p>AI 小说转 YAML 结构化剧本工具</p>
       </div>
       <div class="topbar-actions">
+        <button @click="openHistory">历史项目</button>
         <button @click="loadOfflineDemo">载入完整演示</button>
         <button class="primary" :disabled="!yamlText" @click="downloadYaml">导出 YAML</button>
       </div>
@@ -215,6 +216,37 @@
         </div>
       </section>
     </main>
+
+    <div v-if="historyOpen" class="drawer-backdrop" @click.self="historyOpen = false">
+      <aside class="history-drawer">
+        <div class="drawer-header">
+          <div>
+            <h2>历史项目</h2>
+            <p>{{ projects.length }} 个本地项目</p>
+          </div>
+          <button title="关闭历史项目" @click="historyOpen = false">关闭</button>
+        </div>
+        <div class="history-list">
+          <article v-for="project in projects" :key="project.id" class="history-item">
+            <div class="history-main">
+              <strong>{{ project.title }}</strong>
+              <span :class="statusClass(project.status)">{{ statusLabel(project.status) }}</span>
+              <p>{{ formatProjectDate(project.updated_at) }} · {{ project.source_char_count }} 字</p>
+              <small>
+                {{ project.chapter_count }} 章 · {{ project.scene_count }} 场景
+                <template v-if="project.repair_count"> · 修复 {{ project.repair_count }} 轮</template>
+              </small>
+            </div>
+            <div class="history-actions">
+              <button @click="restoreProject(project)">恢复</button>
+              <button class="danger-button" @click="deleteProject(project)">删除</button>
+            </div>
+          </article>
+          <p v-if="historyLoading" class="muted">正在读取项目...</p>
+          <p v-else-if="!projects.length" class="muted">暂无历史项目</p>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -244,6 +276,9 @@ const parseWarning = ref("");
 const agentTrace = ref([]);
 const progress = ref(0);
 const currentProjectId = ref("");
+const historyOpen = ref(false);
+const historyLoading = ref(false);
+const projects = ref([]);
 const acceptedFileTypes = [
   ".txt",
   ".md",
@@ -323,6 +358,15 @@ async function getJson(url) {
   return data;
 }
 
+async function deleteJson(url) {
+  const response = await fetch(url, { method: "DELETE" });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || "删除失败");
+  }
+  return data;
+}
+
 function formatPercent(value) {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "--";
 }
@@ -354,6 +398,94 @@ function elementTypeLabel(type) {
     sound: "声音",
     shot: "镜头",
   }[type] || type;
+}
+
+function statusLabel(status) {
+  return {
+    processing: "处理中",
+    completed: "已完成",
+    completed_with_warnings: "有警告",
+    failed: "失败",
+    interrupted: "已中断",
+  }[status] || status;
+}
+
+function statusClass(status) {
+  if (status === "completed") return "pass";
+  if (status === "completed_with_warnings" || status === "interrupted") return "warning";
+  if (status === "failed") return "danger";
+  return "muted";
+}
+
+function formatProjectDate(value) {
+  if (!value) return "时间未知";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+async function refreshProjects() {
+  historyLoading.value = true;
+  try {
+    const data = await getJson("/api/projects");
+    projects.value = data.projects || [];
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function openHistory() {
+  historyOpen.value = true;
+  errorMessage.value = "";
+  try {
+    await refreshProjects();
+  } catch (error) {
+    errorMessage.value = error.message;
+  }
+}
+
+async function restoreProject(project) {
+  errorMessage.value = "";
+  try {
+    const data = await getJson(`/api/projects/${project.id}`);
+    currentProjectId.value = project.id;
+    applyProject(data);
+    historyOpen.value = false;
+    if (data.status === "processing") {
+      loading.value = true;
+      localStorage.setItem("novel2script.activeProjectId", project.id);
+      await pollProject(project.id);
+    }
+  } catch (error) {
+    errorMessage.value = error.message;
+    loading.value = false;
+  }
+}
+
+async function deleteProject(project) {
+  if (!window.confirm(`确认删除项目“${project.title}”及其本地文件吗？`)) return;
+  errorMessage.value = "";
+  try {
+    await deleteJson(`/api/projects/${project.id}`);
+    if (currentProjectId.value === project.id) {
+      currentProjectId.value = "";
+      localStorage.removeItem("novel2script.activeProjectId");
+      novelText.value = "";
+      sourceFilename.value = "";
+      chapters.value = [];
+      chapterCount.value = 0;
+      script.value = {};
+      yamlText.value = "";
+      validation.value = {};
+      qualityMetrics.value = {};
+      repairHistory.value = [];
+      agentTrace.value = [];
+      progress.value = 0;
+      currentStep.value = "待开始";
+      currentStepKey.value = "";
+    }
+    await refreshProjects().catch(() => {});
+  } catch (error) {
+    errorMessage.value = error.message;
+  }
 }
 
 function syncParseInfo(data) {
@@ -525,6 +657,7 @@ async function generateScript() {
     currentProjectId.value = data.project_id;
     localStorage.setItem("novel2script.activeProjectId", data.project_id);
     await pollProject(data.project_id);
+    await refreshProjects().catch(() => {});
   } catch (error) {
     errorMessage.value = error.message;
     currentStep.value = "失败";
@@ -592,6 +725,7 @@ async function loadOfflineDemo() {
     currentStep.value = "离线演示已载入";
     currentStepKey.value = "completed";
     progress.value = 100;
+    await refreshProjects();
   } catch (error) {
     errorMessage.value = error.message;
   } finally {

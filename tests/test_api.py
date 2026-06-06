@@ -89,6 +89,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(project["title"], "停电前的最后一单")
         self.assertEqual(project["repair_count"], 1)
 
+    def test_project_list_restore_and_delete(self):
+        _, project = self.request("POST", "/api/demo/import", {})
+        _, listing = self.request("GET", "/api/projects")
+        self.assertEqual(len(listing["projects"]), 1)
+        self.assertEqual(listing["projects"][0]["id"], project["id"])
+        _, restored = self.request("GET", f"/api/projects/{project['id']}")
+        self.assertTrue(restored["yaml"])
+        _, deleted = self.request("DELETE", f"/api/projects/{project['id']}")
+        self.assertTrue(deleted["deleted"])
+        _, empty = self.request("GET", "/api/projects")
+        self.assertEqual(empty["projects"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
