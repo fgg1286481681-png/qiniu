@@ -341,14 +341,81 @@ def split_sentences(text):
 
 def infer_characters(chapters):
     candidates = {}
-    ignored_prefixes = ("第一", "第二", "第三", "这个", "那个", "他们", "我们", "时候", "声音", "会议", "办公室")
-    for chapter in chapters:
-        for name in re.findall(r"[\u4e00-\u9fa5]{2,4}", chapter["text"]):
-            if name.startswith(ignored_prefixes):
-                continue
-            candidates[name] = candidates.get(name, 0) + 1
+    chapter_presence = {}
+    contextual_names = set()
+    ignored_words = {
+        "第一", "第二", "第三", "这个", "那个", "他们", "我们", "时候", "声音",
+        "会议", "办公室", "会议室", "街道", "学校", "医院", "车站", "房间",
+        "大厅", "门口", "公司", "村庄", "教室", "问题", "方案", "事情",
+        "人物", "情绪", "结果", "证据", "数据", "报告", "项目", "社区",
+    }
+    common_surnames = set(
+        "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+        "戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费"
+        "廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于傅皮卞齐康伍余元卜顾孟平黄穆萧"
+        "尹姚邵汪祁毛禹狄米贝明臧计伏成戴宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席"
+        "季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管"
+        "卢莫经房裘缪解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢裴陆荣翁"
+    )
+    context_pattern = re.compile(
+        r"(?:^|[，。！？；：“”\s])([\u4e00-\u9fa5]{2,4})"
+        r"(?=说|问|回答|喊|解释|认为|决定|发现|走进|来到|赶到|推开|拿起|看见|抬头|坚持|担心|同意|承认|整理)"
+    )
 
-    sorted_names = [name for name, _ in sorted(candidates.items(), key=lambda item: item[1], reverse=True)[:6]]
+    def normalize_name(raw_name):
+        surname_index = next(
+            (index for index, char in enumerate(raw_name) if char in common_surnames),
+            None,
+        )
+        if surname_index is None:
+            return ""
+        name = raw_name[surname_index : surname_index + 3]
+        while len(name) > 2 and name[-1] in "的却也就才又便则并仍已正把被向在与和":
+            name = name[:-1]
+        return name
+
+    for chapter in chapters:
+        chapter_names = set()
+        text = chapter["text"]
+        for raw_name in context_pattern.findall(text):
+            name = normalize_name(raw_name)
+            if len(name) < 2 or name in ignored_words:
+                continue
+            candidates[name] = candidates.get(name, 0) + 4
+            chapter_names.add(name)
+            contextual_names.add(name)
+        for index, char in enumerate(text[:-1]):
+            if char not in common_surnames:
+                continue
+            for length in (2, 3):
+                raw_name = text[index : index + length]
+                if len(raw_name) != length or not raw_name.isalpha():
+                    continue
+                name = normalize_name(raw_name)
+                if name in ignored_words or len(name) < 2:
+                    continue
+                count = text.count(name)
+                if count < 2:
+                    continue
+                candidates[name] = candidates.get(name, 0) + count
+                chapter_names.add(name)
+        for name in chapter_names:
+            chapter_presence[name] = chapter_presence.get(name, 0) + 1
+
+    ranked = sorted(
+        candidates,
+        key=lambda name: (chapter_presence.get(name, 0), candidates[name], -len(name)),
+        reverse=True,
+    )
+    sorted_names = []
+    for name in ranked:
+        if name[-1] in "时事物处地里中前后上下" and name not in contextual_names:
+            continue
+        if any(name.startswith(existing) or existing.startswith(name) for existing in sorted_names):
+            continue
+        sorted_names.append(name)
+        if len(sorted_names) == 6:
+            break
     if not sorted_names:
         sorted_names = ["主角", "对手", "旁观者"]
 

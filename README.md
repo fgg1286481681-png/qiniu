@@ -70,6 +70,8 @@ http://127.0.0.1:5173
 - 异步生成、真实进度轮询和刷新后任务恢复
 - 长文本按段落和章节批次分块，Reader 摘要归并后交给 Planner/Writer
 - 历史项目列表、完整恢复和本地删除
+- 生成过程累计计时、阶段状态和任务逻辑取消
+- AI 配置一键自检，分别检测 Reader、Planner、Writer、Validator 模型
 - 复制和导出 YAML
 
 项目持久化：
@@ -84,7 +86,11 @@ http://127.0.0.1:5173
 - `POST /api/generate`：兼容同步生成
 - `POST /api/generate-async`：创建异步任务
 - `POST /api/demo/import`：幂等导入原创离线演示项目
+- `POST /api/ai/health`：执行四个 Agent 的最小模型连通性检测
+- `POST /api/projects/{id}/cancel`：请求取消异步任务
 - `POST /api/validate`：校验用户编辑后的 YAML
+
+AI 自检会分别发送四次极小的模型请求，可能产生少量 Token 消耗。任务取消采用阶段边界取消：标准库 HTTP 请求正在等待模型响应时不会被强制终止，但响应返回后不会继续执行后续 Agent。
 
 运行测试：
 
@@ -107,6 +113,7 @@ py scripts\evaluate.py
 - `READER_CHUNK_CHARS`：Reader 单个段落批次字符数，默认 12000
 - `PLANNER_CHUNK_CHARS`：Planner 单个章节批次字符数，默认 14000
 - `WRITER_INPUT_CHARS`：Writer 章节摘录总字符预算，默认 18000
+- `LLM_HEALTH_TIMEOUT_SECONDS`：单个模型自检超时，默认 20 秒
 
 上传文件读取能力：
 

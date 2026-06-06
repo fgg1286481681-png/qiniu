@@ -35,8 +35,16 @@ class LLMClient:
     def __init__(self, api_base_url=None, api_key=None, timeout_seconds=None, max_retries=None):
         self.api_base_url = (api_base_url or get_env("LLM_API_BASE_URL", "")).rstrip("/")
         self.api_key = api_key or get_env("LLM_API_KEY", "")
-        self.timeout_seconds = int(timeout_seconds or get_env("LLM_DEFAULT_TIMEOUT_SECONDS", "180"))
-        self.max_retries = int(max_retries or get_env("LLM_MAX_RETRIES", "2"))
+        self.timeout_seconds = int(
+            get_env("LLM_DEFAULT_TIMEOUT_SECONDS", "180")
+            if timeout_seconds is None
+            else timeout_seconds
+        )
+        self.max_retries = int(
+            get_env("LLM_MAX_RETRIES", "2")
+            if max_retries is None
+            else max_retries
+        )
 
     @property
     def enabled(self):

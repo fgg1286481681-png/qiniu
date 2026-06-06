@@ -19,10 +19,16 @@ py server.py
 - `POST /api/generate`
 - `POST /api/generate-async`
 - `POST /api/demo/import`
+- `POST /api/ai/health`
+- `POST /api/projects/{id}/cancel`
 - `POST /api/validate`
 - `DELETE /api/projects/{id}`
 
 异步任务在单进程 `ThreadPoolExecutor` 中执行，默认最多并发 2 个。服务重启后，未完成任务会标记为 `interrupted`。
+
+取消采用逻辑取消。任务收到取消请求后标记为 `cancelling`，当前模型 HTTP 请求返回时停止进入下一阶段，最终状态为 `cancelled`。
+
+AI 自检通过四个最小 Chat Completions 请求验证模型名称和服务连通性，不返回或记录 API Key。
 
 长文本处理：
 

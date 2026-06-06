@@ -101,6 +101,30 @@ class ApiTests(unittest.TestCase):
         _, empty = self.request("GET", "/api/projects")
         self.assertEqual(empty["projects"], [])
 
+    def test_ai_health_reports_unconfigured_agents(self):
+        status, result = self.request("POST", "/api/ai/health", {})
+        self.assertEqual(status, 200)
+        self.assertFalse(result["ready"])
+        self.assertEqual(len(result["agents"]), 4)
+        self.assertTrue(all(not item["configured"] for item in result["agents"]))
+
+    def test_cancel_endpoint_marks_request(self):
+        project_id = "00000000-0000-4000-8000-000000000012"
+        server.PROJECT_STORE.create_project(project_id, "取消接口", SOURCE, "test.txt")
+        status, result = self.request(
+            "POST",
+            f"/api/projects/{project_id}/cancel",
+            {},
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(result["current_step"], "cancelling")
+        self.assertTrue(server.PROJECT_STORE.is_cancel_requested(project_id))
+        self.assertIsNone(server.run_generation(project_id, SOURCE, "取消接口"))
+        self.assertEqual(
+            server.PROJECT_STORE.get_project(project_id)["status"],
+            "cancelled",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

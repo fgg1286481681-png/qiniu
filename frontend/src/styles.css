@@ -264,10 +264,62 @@ textarea {
   font-style: normal;
 }
 
+.generate-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .generate {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 0;
   height: 42px;
+}
+
+.cancel-button {
+  height: 42px;
+  color: #b42318;
+  border-color: #e1aaa5;
+}
+
+.generation-hint {
+  margin: 8px 0 0;
+  color: #6d7b88;
+  font-size: 13px;
+}
+
+.ai-health-panel {
+  margin-top: 12px;
+  border: 1px solid #d7dde5;
+  padding: 12px;
+}
+
+.ai-health-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-top: 1px solid #edf1f5;
+}
+
+.ai-health-row:first-of-type {
+  border-top: 0;
+}
+
+.ai-health-row small {
+  display: block;
+  margin-top: 3px;
+  color: #6d7b88;
+  overflow-wrap: anywhere;
+}
+
+.ai-health-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .error,

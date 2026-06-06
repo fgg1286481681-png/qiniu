@@ -1,7 +1,8 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+from time import perf_counter
 import uuid
 
 from jsonschema.exceptions import ValidationError
@@ -9,6 +10,7 @@ from jsonschema.exceptions import ValidationError
 from agents.reader import parse_chapters
 from agents.validator import parse_yaml_script, validate_script
 from demo_service import import_demo_project
+from llm_client import LLMClient, get_env
 from orchestrator import generate_project
 from project_store import ProjectStore
 from quality_metrics import calculate_quality_metrics
@@ -20,6 +22,71 @@ PORT = 8000
 PROJECT_STORE = ProjectStore()
 PROJECT_STORE.interrupt_processing_projects()
 TASK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="novel2script")
+AI_HEALTH_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-health")
+
+
+class GenerationCancelled(Exception):
+    pass
+
+
+def check_ai_agent(agent_name, model):
+    configured = bool(
+        get_env("LLM_API_BASE_URL", "")
+        and get_env("LLM_API_KEY", "")
+        and model
+    )
+    result = {
+        "agent": agent_name,
+        "model": model or None,
+        "configured": configured,
+        "reachable": False,
+        "duration_ms": None,
+        "error": None,
+    }
+    if not configured:
+        result["error"] = "API 地址、Key 或模型名称未完整配置"
+        return result
+
+    started = perf_counter()
+    try:
+        client = LLMClient(
+            timeout_seconds=int(get_env("LLM_HEALTH_TIMEOUT_SECONDS", "20")),
+            max_retries=0,
+        )
+        client.chat_json(
+            model=model,
+            system_prompt="你是连通性检测助手，只输出严格 JSON。",
+            user_prompt='请只输出 {"ok": true}',
+            temperature=0,
+            top_p=1,
+            max_tokens=30,
+        )
+        result["reachable"] = True
+    except Exception as exc:
+        result["error"] = str(exc)[:300]
+    result["duration_ms"] = round((perf_counter() - started) * 1000)
+    return result
+
+
+def check_all_ai_agents():
+    models = {
+        "Reader Agent": get_env("READER_MODEL", ""),
+        "Planner Agent": get_env("PLANNER_MODEL", ""),
+        "Writer Agent": get_env("WRITER_MODEL", ""),
+        "Validator Agent": get_env("VALIDATOR_MODEL", ""),
+    }
+    futures = {
+        AI_HEALTH_EXECUTOR.submit(check_ai_agent, agent, model): agent
+        for agent, model in models.items()
+    }
+    results = []
+    for future in as_completed(futures):
+        results.append(future.result())
+    results.sort(key=lambda item: list(models).index(item["agent"]))
+    return {
+        "ready": all(item["reachable"] for item in results),
+        "agents": results,
+    }
 
 
 def json_response(handler, status, payload):
@@ -55,7 +122,12 @@ def public_result(result):
 
 
 def run_generation(project_id, source_text, title):
+    def ensure_not_cancelled():
+        if PROJECT_STORE.is_cancel_requested(project_id):
+            raise GenerationCancelled("用户取消了生成任务")
+
     def report_progress(step, progress, agent_trace):
+        ensure_not_cancelled()
         trace = list(agent_trace)
         if step in {"reader", "planner", "writer", "validator", "repair"}:
             agent_names = {
@@ -84,15 +156,20 @@ def run_generation(project_id, source_text, title):
         PROJECT_STORE.update_progress(project_id, step, progress, trace)
 
     try:
+        ensure_not_cancelled()
         result = generate_project(
             source_text,
             title,
             project_id=project_id,
             progress_callback=report_progress,
         )
+        ensure_not_cancelled()
         artifacts = result["_artifacts"]
         PROJECT_STORE.complete_project(project_id, result, artifacts)
         return public_result(result)
+    except GenerationCancelled:
+        PROJECT_STORE.mark_cancelled(project_id)
+        return None
     except Exception as exc:
         PROJECT_STORE.fail_project(project_id, exc)
         raise
@@ -204,6 +281,31 @@ class AppHandler(BaseHTTPRequestHandler):
             if path == "/api/demo/import":
                 project = import_demo_project(PROJECT_STORE)
                 json_response(self, 200, project)
+                return
+
+            if path == "/api/ai/health":
+                json_response(self, 200, check_all_ai_agents())
+                return
+
+            if path.startswith("/api/projects/") and path.endswith("/cancel"):
+                cancel_project_id = path[
+                    len("/api/projects/") : -len("/cancel")
+                ].strip("/")
+                result = PROJECT_STORE.request_cancel(cancel_project_id)
+                if result is None:
+                    json_response(self, 404, {"error": "项目不存在"})
+                elif result is False:
+                    json_response(self, 409, {"error": "项目当前状态无法取消"})
+                else:
+                    json_response(
+                        self,
+                        202,
+                        {
+                            "project_id": cancel_project_id,
+                            "status": "processing",
+                            "current_step": "cancelling",
+                        },
+                    )
                 return
 
             if path == "/api/validate":

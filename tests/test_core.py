@@ -16,7 +16,12 @@ os.environ["PLANNER_MODEL"] = ""
 os.environ["WRITER_MODEL"] = ""
 os.environ["VALIDATOR_MODEL"] = ""
 
-from agents.planner import PlannerLLMProvider, build_rule_plan, chunk_chapters
+from agents.planner import (
+    PlannerLLMProvider,
+    build_rule_plan,
+    chunk_chapters,
+    infer_characters,
+)
 from agents.reader import ReaderAgent, ReaderLLMProvider, chunk_paragraphs, parse_chapters
 from agents.validator import ValidatorAgent, validate_script
 from agents.writer import build_rule_script, dump_script_yaml
@@ -192,6 +197,18 @@ class CoreTests(unittest.TestCase):
             any("至少保留 3 项" in item["suggestion"] for item in validation["errors"])
         )
 
+    def test_schema_requires_at_least_three_chapters(self):
+        _, script = valid_script()
+        script["chapters"] = script["chapters"][:2]
+        validation = validate_script(script)
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                item["path"] == "chapters" and "至少保留 3 项" in item["suggestion"]
+                for item in validation["errors"]
+            )
+        )
+
     def test_quality_metrics_are_deterministic(self):
         _, script = valid_script()
         validation = validate_script(script)
@@ -201,6 +218,47 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(metrics["reference_consistency"], 1.0)
         self.assertEqual(metrics["scene_completeness"], 1.0)
         self.assertTrue(metrics["repair_triggered"])
+
+    def test_rule_writer_uses_event_specific_dialogue(self):
+        _, script = valid_script()
+        dialogue = [
+            element["text"]
+            for scene in script["scenes"]
+            for element in scene["elements"]
+            if element["type"] == "dialogue"
+        ]
+        self.assertNotIn("这件事不能再拖下去了。", dialogue)
+        self.assertNotIn("你确定自己承担得起后果吗？", dialogue)
+        self.assertGreater(len(set(dialogue)), 2)
+
+    def test_rule_character_extraction_prefers_behavior_context(self):
+        chapters = [
+            {
+                "text": (
+                    "会议室里讨论方案和数据。林清走进会议室，林清说要核对证据。"
+                    "周原回答需要查看报告，周原决定一起调查。"
+                )
+            }
+        ]
+        names = [item["name"] for item in infer_characters(chapters)]
+        self.assertIn("林清", names)
+        self.assertIn("周原", names)
+        self.assertNotIn("会议室", names)
+
+    def test_rule_character_extraction_trims_connective_words(self):
+        chapters = [
+            {
+                "text": (
+                    "许澄却发现订单异常，许澄整理柜台。"
+                    "并由周岚决定是否签名，周岚赶到书店。"
+                )
+            }
+        ]
+        names = [item["name"] for item in infer_characters(chapters)]
+        self.assertIn("许澄", names)
+        self.assertIn("周岚", names)
+        self.assertNotIn("许澄却", names)
+        self.assertNotIn("并由周岚", names)
 
     def test_reader_fallback_is_marked_degraded(self):
         result = ReaderAgent(provider=BrokenReaderProvider()).run(SOURCE)
@@ -231,6 +289,19 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(project["progress"], 50)
             self.assertEqual(store.interrupt_processing_projects(), 1)
             self.assertEqual(store.get_project(project_id)["status"], "interrupted")
+
+    def test_project_store_cancel_lifecycle(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            store = ProjectStore(root / "test.db", root / "projects")
+            project_id = "00000000-0000-4000-8000-000000000011"
+            store.create_project(project_id, "取消测试", SOURCE, "test.txt")
+            self.assertTrue(store.request_cancel(project_id))
+            self.assertTrue(store.is_cancel_requested(project_id))
+            store.mark_cancelled(project_id)
+            project = store.get_project(project_id)
+            self.assertEqual(project["status"], "cancelled")
+            self.assertEqual(project["current_step"], "cancelled")
 
     def test_demo_import_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temp_dir:

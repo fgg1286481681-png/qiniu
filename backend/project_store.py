@@ -60,6 +60,7 @@ class ProjectStore:
                     started_at TEXT,
                     finished_at TEXT,
                     repair_count INTEGER NOT NULL DEFAULT 0,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
                     project_path TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -76,6 +77,7 @@ class ProjectStore:
                 "started_at": "TEXT",
                 "finished_at": "TEXT",
                 "repair_count": "INTEGER NOT NULL DEFAULT 0",
+                "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
             }
             for column, definition in migrations.items():
                 if column not in existing_columns:
@@ -198,6 +200,47 @@ class ProjectStore:
                 WHERE id = ?
                 """,
                 (str(error_message), now, now, project_id),
+            )
+
+    def request_cancel(self, project_id):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["status"] != "processing":
+                return False
+            connection.execute(
+                """
+                UPDATE projects
+                SET cancel_requested = 1, current_step = 'cancelling', updated_at = ?
+                WHERE id = ?
+                """,
+                (utc_now(), project_id),
+            )
+        return True
+
+    def is_cancel_requested(self, project_id):
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT cancel_requested FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def mark_cancelled(self, project_id):
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE projects
+                SET status = 'cancelled', current_step = 'cancelled', progress = 100,
+                    error_message = NULL, finished_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, project_id),
             )
 
     def interrupt_processing_projects(self):

@@ -6,6 +6,9 @@
         <p>AI 小说转 YAML 结构化剧本工具</p>
       </div>
       <div class="topbar-actions">
+        <button :disabled="aiChecking" @click="checkAiHealth">
+          {{ aiChecking ? "检测中..." : "检测 AI" }}
+        </button>
         <button @click="openHistory">历史项目</button>
         <button @click="loadOfflineDemo">载入完整演示</button>
         <button class="primary" :disabled="!yamlText" @click="downloadYaml">导出 YAML</button>
@@ -48,10 +51,40 @@
           <p v-else class="muted">尚未识别章节</p>
         </div>
 
-        <button class="generate" :disabled="loading || chapterCount < 3" @click="generateScript">
-          {{ loading ? "生成中..." : "生成剧本" }}
-        </button>
+        <div class="generate-row">
+          <button class="generate" :disabled="loading || chapterCount < 3" @click="generateScript">
+            {{ loading ? `生成中 · ${elapsedLabel}` : "生成剧本" }}
+          </button>
+          <button v-if="loading && currentProjectId" class="cancel-button" @click="cancelGeneration">
+            取消
+          </button>
+        </div>
+        <p v-if="chapterCount < 3" class="generation-hint">
+          至少识别到 3 个章节后才能生成，当前识别到 {{ chapterCount }} 章。
+        </p>
+        <p v-else-if="loading" class="generation-hint">
+          {{ currentStep }} · 已用时 {{ elapsedLabel }}
+        </p>
         <p v-if="errorMessage" class="error">{{ errorMessage }}</p>
+
+        <div v-if="aiHealth.agents?.length" class="ai-health-panel">
+          <div class="panel-title small">
+            <h3>AI 配置自检</h3>
+            <span :class="{ pass: aiHealth.ready, danger: !aiHealth.ready }">
+              {{ aiHealth.ready ? "全部就绪" : "需要检查" }}
+            </span>
+          </div>
+          <div v-for="item in aiHealth.agents" :key="item.agent" class="ai-health-row">
+            <div>
+              <strong>{{ item.agent }}</strong>
+              <small>{{ item.model || "未配置模型" }}</small>
+            </div>
+            <span :class="{ pass: item.reachable, danger: !item.reachable }">
+              {{ item.reachable ? `${formatDuration(item.duration_ms)} · 可用` : item.configured ? "连接失败" : "未配置" }}
+            </span>
+            <p v-if="item.error">{{ item.error }}</p>
+          </div>
+        </div>
       </section>
 
       <section class="panel result-panel">
@@ -276,9 +309,13 @@ const parseWarning = ref("");
 const agentTrace = ref([]);
 const progress = ref(0);
 const currentProjectId = ref("");
+const elapsedSeconds = ref(0);
+let elapsedTimer = null;
 const historyOpen = ref(false);
 const historyLoading = ref(false);
 const projects = ref([]);
+const aiChecking = ref(false);
+const aiHealth = ref({});
 const acceptedFileTypes = [
   ".txt",
   ".md",
@@ -334,6 +371,11 @@ const qualityCards = computed(() => {
 const highIssueCount = computed(() => {
   const counts = qualityMetrics.value?.ai_review?.severity_counts || {};
   return (counts.high || 0) + (counts.critical || 0);
+});
+const elapsedLabel = computed(() => {
+  const minutes = Math.floor(elapsedSeconds.value / 60);
+  const seconds = elapsedSeconds.value % 60;
+  return minutes ? `${minutes} 分 ${String(seconds).padStart(2, "0")} 秒` : `${seconds} 秒`;
 });
 
 async function postJson(url, payload) {
@@ -407,19 +449,35 @@ function statusLabel(status) {
     completed_with_warnings: "有警告",
     failed: "失败",
     interrupted: "已中断",
+    cancelled: "已取消",
   }[status] || status;
 }
 
 function statusClass(status) {
   if (status === "completed") return "pass";
   if (status === "completed_with_warnings" || status === "interrupted") return "warning";
-  if (status === "failed") return "danger";
+  if (status === "failed" || status === "cancelled") return "danger";
   return "muted";
 }
 
 function formatProjectDate(value) {
   if (!value) return "时间未知";
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function startElapsedTimer(initialSeconds = 0) {
+  stopElapsedTimer();
+  elapsedSeconds.value = Math.max(0, initialSeconds);
+  elapsedTimer = window.setInterval(() => {
+    elapsedSeconds.value += 1;
+  }, 1000);
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer !== null) {
+    window.clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
 }
 
 async function refreshProjects() {
@@ -442,6 +500,18 @@ async function openHistory() {
   }
 }
 
+async function checkAiHealth() {
+  aiChecking.value = true;
+  errorMessage.value = "";
+  try {
+    aiHealth.value = await postJson("/api/ai/health", {});
+  } catch (error) {
+    errorMessage.value = error.message;
+  } finally {
+    aiChecking.value = false;
+  }
+}
+
 async function restoreProject(project) {
   errorMessage.value = "";
   try {
@@ -451,6 +521,8 @@ async function restoreProject(project) {
     historyOpen.value = false;
     if (data.status === "processing") {
       loading.value = true;
+      const startedAt = data.started_at ? new Date(data.started_at).getTime() : Date.now();
+      startElapsedTimer(Math.floor((Date.now() - startedAt) / 1000));
       localStorage.setItem("novel2script.activeProjectId", project.id);
       await pollProject(project.id);
     }
@@ -481,6 +553,7 @@ async function deleteProject(project) {
       progress.value = 0;
       currentStep.value = "待开始";
       currentStepKey.value = "";
+      stopElapsedTimer();
     }
     await refreshProjects().catch(() => {});
   } catch (error) {
@@ -646,6 +719,7 @@ async function generateScript() {
   validation.value = {};
   qualityMetrics.value = {};
   agentTrace.value = [];
+  startElapsedTimer();
   try {
     currentStep.value = "任务排队";
     currentStepKey.value = "queued";
@@ -663,7 +737,20 @@ async function generateScript() {
     currentStep.value = "失败";
     currentStepKey.value = "failed";
     loading.value = false;
+    stopElapsedTimer();
     localStorage.removeItem("novel2script.activeProjectId");
+  }
+}
+
+async function cancelGeneration() {
+  if (!currentProjectId.value) return;
+  errorMessage.value = "";
+  try {
+    await postJson(`/api/projects/${currentProjectId.value}/cancel`, {});
+    currentStep.value = "正在取消";
+    currentStepKey.value = "cancelling";
+  } catch (error) {
+    errorMessage.value = error.message;
   }
 }
 
@@ -688,6 +775,10 @@ function applyProject(data) {
   progress.value = data.progress || 0;
   currentStepKey.value = data.current_step || "";
   currentStep.value = stepLabel(data.current_step, data.status);
+  if (data.status === "processing" && elapsedTimer === null) {
+    const startedAt = data.started_at ? new Date(data.started_at).getTime() : Date.now();
+    startElapsedTimer(Math.floor((Date.now() - startedAt) / 1000));
+  }
 }
 
 function stepLabel(step, status) {
@@ -696,6 +787,8 @@ function stepLabel(step, status) {
   }
   if (status === "failed") return "失败";
   if (status === "interrupted") return "任务已中断";
+  if (status === "cancelled") return "已取消";
+  if (step === "cancelling") return "正在取消";
   return steps.find((item) => item.key === step)?.label || (step === "queued" ? "任务排队" : "处理中");
 }
 
@@ -703,8 +796,9 @@ async function pollProject(projectId) {
   while (true) {
     const data = await getJson(`/api/projects/${projectId}`);
     applyProject(data);
-    if (["completed", "completed_with_warnings", "failed", "interrupted"].includes(data.status)) {
+    if (["completed", "completed_with_warnings", "failed", "interrupted", "cancelled"].includes(data.status)) {
       loading.value = false;
+      stopElapsedTimer();
       localStorage.removeItem("novel2script.activeProjectId");
       if (data.status === "failed") {
         throw new Error(data.error_message || "生成失败");
@@ -717,6 +811,7 @@ async function pollProject(projectId) {
 
 async function loadOfflineDemo() {
   loading.value = true;
+  stopElapsedTimer();
   errorMessage.value = "";
   try {
     const data = await postJson("/api/demo/import", {});
@@ -765,12 +860,14 @@ onMounted(async () => {
   const activeProjectId = localStorage.getItem("novel2script.activeProjectId");
   if (!activeProjectId) return;
   loading.value = true;
+  startElapsedTimer();
   currentProjectId.value = activeProjectId;
   try {
     await pollProject(activeProjectId);
   } catch (error) {
     errorMessage.value = error.message;
     loading.value = false;
+    stopElapsedTimer();
   }
 });
 </script>

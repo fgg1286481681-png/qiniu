@@ -387,6 +387,7 @@ def repair_script_rules(script, plan):
 
 
 def build_scenes(chapters, characters, locations, events):
+    character_by_id = {item["id"]: item for item in characters}
     scenes = []
     for index, event in enumerate(events):
         chapter = next(
@@ -397,6 +398,8 @@ def build_scenes(chapters, characters, locations, events):
         scene_characters = event["characters"] or [characters[0]["id"]]
         protagonist = scene_characters[0]
         opponent = scene_characters[1] if len(scene_characters) > 1 else protagonist
+        protagonist_info = character_by_id.get(protagonist, {})
+        opponent_info = character_by_id.get(opponent, {})
         scenes.append(
             {
                 "id": f"scene_{index + 1:03d}",
@@ -411,16 +414,49 @@ def build_scenes(chapters, characters, locations, events):
                 "elements": [
                     {
                         "type": "action",
-                        "text": f"{location['name']}里，人物围绕新的矛盾展开行动。",
+                        "text": build_rule_action(location["name"], event, protagonist_info),
                         "event_id": event["id"],
                     },
-                    {"type": "dialogue", "character_id": protagonist, "text": "这件事不能再拖下去了。"},
-                    {"type": "dialogue", "character_id": opponent, "text": "你确定自己承担得起后果吗？"},
+                    {
+                        "type": "dialogue",
+                        "character_id": protagonist,
+                        "text": build_rule_dialogue(protagonist_info, event, leading=True),
+                    },
+                    {
+                        "type": "dialogue",
+                        "character_id": opponent,
+                        "text": build_rule_dialogue(opponent_info, event, leading=False),
+                    },
                     {"type": "narration", "text": event["emotional_shift"]},
                 ],
             }
         )
     return scenes
+
+
+def compact_text(value, limit=42):
+    text = str(value or "").strip().rstrip("。！？!?；;")
+    return text[:limit] if text else ""
+
+
+def build_rule_action(location_name, event, character):
+    name = character.get("name") or "人物"
+    summary = compact_text(event.get("summary"), 48) or "眼前的事件"
+    return f"{location_name}里，{name}围绕“{summary}”采取行动，现场关系随之发生变化。"
+
+
+def build_rule_dialogue(character, event, leading):
+    name = character.get("name") or "我"
+    goal = compact_text(character.get("goal"), 30)
+    summary = compact_text(event.get("summary"), 34)
+    conflict = compact_text(event.get("conflict"), 34)
+    if leading:
+        if goal:
+            return f"我是{name}。为了{goal}，关于{summary or '这件事'}，我需要现在作出决定。"
+        return f"关于{summary or '眼前的问题'}，我不能只等别人给出答案。"
+    if conflict:
+        return f"先解决“{conflict}”，否则你的决定只会让局面更复杂。"
+    return f"我理解你的选择，但我们还需要确认它会给所有人带来什么结果。"
 
 
 def build_script(title, chapters, characters, locations, events, scenes, notes=None):
