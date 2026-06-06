@@ -22,6 +22,23 @@ py -m pip install -r requirements.txt
 py server.py
 ```
 
+配置 Reader AI：
+
+```powershell
+cd E:\agent\七牛云
+copy .env.example .env
+```
+
+然后在 `.env` 中填写：
+
+```text
+LLM_API_BASE_URL=https://你的OpenAI兼容服务地址/v1
+LLM_API_KEY=你的key
+READER_MODEL=你的reader模型
+```
+
+当前版本只接入 `Reader Agent` 的真实 API 调用。未配置 `.env` 或调用失败时，会自动回退到规则解析。
+
 启动前端：
 
 ```powershell
