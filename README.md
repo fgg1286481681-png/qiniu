@@ -22,7 +22,7 @@ py -m pip install -r requirements.txt
 py server.py
 ```
 
-配置 Reader AI：
+配置多 Agent AI：
 
 ```powershell
 cd E:\agent\七牛云
@@ -35,9 +35,12 @@ copy .env.example .env
 LLM_API_BASE_URL=https://你的OpenAI兼容服务地址/v1
 LLM_API_KEY=你的key
 READER_MODEL=你的reader模型
+PLANNER_MODEL=你的planner模型
+WRITER_MODEL=你的writer模型
+VALIDATOR_MODEL=你的validator模型
 ```
 
-当前版本只接入 `Reader Agent` 的真实 API 调用。未配置 `.env` 或调用失败时，会自动回退到规则解析。
+当前版本的 Reader、Planner、Writer、Validator 均已接入真实 API 调用。任一 Agent 未配置或调用失败时，会自动回退到对应规则实现。
 
 启动前端：
 

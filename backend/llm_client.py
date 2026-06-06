@@ -51,6 +51,8 @@ class LLMClient:
         temperature=0.1,
         top_p=0.9,
         max_tokens=8000,
+        presence_penalty=None,
+        frequency_penalty=None,
     ):
         if not self.enabled:
             raise RuntimeError("LLM_API_BASE_URL 或 LLM_API_KEY 未配置")
@@ -68,6 +70,10 @@ class LLMClient:
             "max_tokens": max_tokens,
             "stream": False,
         }
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
+        if frequency_penalty is not None:
+            payload["frequency_penalty"] = frequency_penalty
 
         last_error = None
         for attempt in range(self.max_retries + 1):
