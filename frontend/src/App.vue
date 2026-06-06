@@ -19,8 +19,8 @@
 
         <div class="actions">
           <label class="file-button">
-            上传 TXT
-            <input type="file" accept=".txt,text/plain" @change="handleFile" />
+            上传文件
+            <input type="file" :accept="acceptedFileTypes" @change="handleFile" />
           </label>
           <button @click="loadSample">载入样例</button>
           <button @click="analyzeText">识别章节</button>
@@ -182,6 +182,30 @@ const tab = ref("characters");
 const parseMode = ref("");
 const parseWarning = ref("");
 const agentTrace = ref([]);
+const acceptedFileTypes = [
+  ".txt",
+  ".md",
+  ".markdown",
+  ".csv",
+  ".tsv",
+  ".json",
+  ".yaml",
+  ".yml",
+  ".html",
+  ".htm",
+  ".xml",
+  ".log",
+  ".docx",
+  ".epub",
+  ".pdf",
+  "text/plain",
+  "text/markdown",
+  "text/html",
+  "application/json",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/epub+zip",
+].join(",");
 const steps = ["章节解析", "信息抽取", "场景规划", "剧本生成", "Schema 校验"];
 const currentStep = ref("待开始");
 const doneSteps = ref([]);
@@ -228,16 +252,117 @@ function loadSample() {
   analyzeText();
 }
 
-function decodeTextFile(buffer) {
-  const encodings = ["utf-8", "gb18030", "gbk"];
+function getFileExtension(file) {
+  const name = file.name || "";
+  const index = name.lastIndexOf(".");
+  return index >= 0 ? name.slice(index + 1).toLowerCase() : "";
+}
+
+function scoreDecodedText(text) {
+  if (!text) return -Infinity;
+  const sample = text.slice(0, 4000);
+  const replacementCount = (sample.match(/\uFFFD/g) || []).length;
+  const cjkCount = (sample.match(/[\u4e00-\u9fff]/g) || []).length;
+  const punctuationCount = (sample.match(/[，。！？；：“”‘’、,.!?;:"']/g) || []).length;
+  const controlCount = (sample.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) || []).length;
+  return cjkCount * 3 + punctuationCount - replacementCount * 20 - controlCount * 30;
+}
+
+function decodeTextBuffer(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder("utf-8").decode(bytes.slice(3));
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder("utf-16le").decode(bytes.slice(2));
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder("utf-16be").decode(bytes.slice(2));
+  }
+
+  const evenNulls = bytes.filter((value, index) => index % 2 === 0 && value === 0).length;
+  const oddNulls = bytes.filter((value, index) => index % 2 === 1 && value === 0).length;
+  if (oddNulls > bytes.length * 0.2) {
+    return new TextDecoder("utf-16le").decode(bytes);
+  }
+  if (evenNulls > bytes.length * 0.2) {
+    return new TextDecoder("utf-16be").decode(bytes);
+  }
+
+  const encodings = ["utf-8", "gb18030", "gbk", "big5", "shift_jis", "windows-1252"];
+  const results = [];
   for (const encoding of encodings) {
     try {
-      return new TextDecoder(encoding, { fatal: true }).decode(buffer);
+      const text = new TextDecoder(encoding, { fatal: true }).decode(buffer);
+      results.push({ encoding, text, score: scoreDecodedText(text) });
     } catch {
-      // Try the next common Chinese text encoding.
+      // Try the next common novel text encoding.
     }
   }
+  if (results.length) {
+    results.sort((a, b) => b.score - a.score);
+    return results[0].text;
+  }
   return new TextDecoder("utf-8").decode(buffer);
+}
+
+function stripHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script, style, noscript").forEach((node) => node.remove());
+  return doc.body?.textContent?.replace(/\n{3,}/g, "\n\n").trim() || "";
+}
+
+async function readDocx(buffer) {
+  const { default: mammoth } = await import("mammoth/mammoth.browser");
+  const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+  return result.value.trim();
+}
+
+async function readEpub(buffer) {
+  const { default: JSZip } = await import("jszip");
+  const zip = await JSZip.loadAsync(buffer);
+  const textParts = [];
+  const entries = Object.values(zip.files)
+    .filter((file) => !file.dir && /\.(xhtml|html|htm)$/i.test(file.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const entry of entries) {
+    const html = await entry.async("string");
+    const text = stripHtml(html);
+    if (text) textParts.push(text);
+  }
+
+  if (!textParts.length) {
+    throw new Error("未能从 EPUB 中提取正文");
+  }
+  return textParts.join("\n\n");
+}
+
+async function readPdf(buffer) {
+  const pdfjsLib = await import("pdfjs-dist/build/pdf.mjs");
+  const pdfWorkerUrl = (await import("pdfjs-dist/build/pdf.worker.mjs?url")).default;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  const document = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(""));
+  }
+  return pages.join("\n\n").trim();
+}
+
+async function readUploadedFile(file) {
+  const buffer = await file.arrayBuffer();
+  const extension = getFileExtension(file);
+
+  if (extension === "docx") return readDocx(buffer);
+  if (extension === "epub") return readEpub(buffer);
+  if (extension === "pdf") return readPdf(buffer);
+
+  const text = decodeTextBuffer(buffer);
+  if (["html", "htm"].includes(extension)) return stripHtml(text);
+  return text;
 }
 
 async function handleFile(event) {
@@ -245,11 +370,10 @@ async function handleFile(event) {
   if (!file) return;
   errorMessage.value = "";
   try {
-    const buffer = await file.arrayBuffer();
-    novelText.value = decodeTextFile(buffer);
+    novelText.value = await readUploadedFile(file);
     await analyzeText();
   } catch (error) {
-    errorMessage.value = `读取 TXT 失败：${error.message}`;
+    errorMessage.value = `读取文件失败：${error.message}`;
   }
 }
 

@@ -38,7 +38,7 @@ http://127.0.0.1:5173
 
 第一版 Demo 已支持：
 
-- 粘贴小说文本或上传 TXT
+- 粘贴小说文本或上传 TXT、Markdown、HTML、DOCX、EPUB、PDF 等文件
 - 载入内置 3 章样例
 - 自动识别章节
 - 生成结构化 YAML 剧本
@@ -46,6 +46,14 @@ http://127.0.0.1:5173
 - 展示 Reader / Planner / Writer / Validator Agent 工作链
 - 展示 Schema 校验结果
 - 复制和导出 YAML
+
+上传文件读取能力：
+
+- 文本类：`.txt`、`.md`、`.markdown`、`.csv`、`.tsv`、`.json`、`.yaml`、`.yml`、`.html`、`.htm`、`.xml`、`.log`
+- 文档类：`.docx`
+- 电子书：`.epub`
+- PDF：`.pdf`
+- 编码识别：UTF-8、UTF-8 BOM、UTF-16LE、UTF-16BE、GB18030、GBK、Big5、Shift_JIS、Windows-1252
 
 ## 文档
 
