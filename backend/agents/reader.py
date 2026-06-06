@@ -49,15 +49,16 @@ class ReaderLLMProvider:
         if not self.enabled:
             raise RuntimeError("Reader LLM 未配置")
 
+        paragraphs = split_paragraphs(text)
         result = self.client.chat_json(
             model=self.model,
             system_prompt=READER_SYSTEM_PROMPT,
-            user_prompt=build_reader_user_prompt(text),
+            user_prompt=build_reader_user_prompt(paragraphs),
             temperature=self.temperature,
             top_p=self.top_p,
             max_tokens=self.max_tokens,
         )
-        return normalize_llm_parse_result(result)
+        return normalize_llm_parse_result(result, paragraphs)
 
 
 def build_reader_provider():
@@ -74,7 +75,8 @@ JSON 顶层结构必须是：
     {
       "title": "章节或段落标题",
       "summary": "本章节事实摘要",
-      "text": "该章节对应原文，不要改写",
+      "paragraph_start": 1,
+      "paragraph_end": 5,
       "key_events": ["事件1"],
       "characters": ["人物1"],
       "locations": ["地点1"]
@@ -83,39 +85,60 @@ JSON 顶层结构必须是：
   "mode": "llm",
   "warning": null
 }
-如果原文没有明确章节，请按叙事阶段拆成 3 到 8 个章节；每个章节 text 必须来自原文。
+如果原文没有明确章节，请按叙事阶段拆成 3 到 8 个章节。
+paragraph_start 和 paragraph_end 是包含边界的段落编号，必须覆盖原文并保持顺序，不得重叠。
 不要输出原文之外的新剧情。
 """
 
 
-def build_reader_user_prompt(text):
+def split_paragraphs(text):
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", normalized) if part.strip()]
+    if len(paragraphs) < 3:
+        paragraphs = [part.strip() for part in normalized.splitlines() if part.strip()]
+    return paragraphs
+
+
+def build_reader_user_prompt(paragraphs):
+    numbered_text = "\n\n".join(
+        f"[段落 {index}]\n{paragraph}"
+        for index, paragraph in enumerate(paragraphs, start=1)
+    )
     return f"""请解析下面的小说文本。
 要求：
 1. 如果有章节标题，优先按原章节拆分。
 2. 如果没有章节标题，按叙事阶段拆成 3 到 8 个章节。
-3. 每个 chapters[].text 必须保留原文片段，不要改写。
+3. 不要在 JSON 中重复原文，只返回 paragraph_start 和 paragraph_end。
 4. 保留标题、摘要、关键事件、人物、地点。
-5. 只输出 JSON。
+5. 段落范围必须从 1 开始，覆盖到段落 {len(paragraphs)}，保持连续且不重叠。
+6. 只输出 JSON。
 
 小说文本：
-{text}
+{numbered_text}
 """
 
 
-def normalize_llm_parse_result(result):
+def normalize_llm_parse_result(result, paragraphs):
     raw_chapters = result.get("chapters")
     if not isinstance(raw_chapters, list):
         raise ValueError("Reader LLM 输出缺少 chapters 数组")
 
     chapters = []
+    last_end = 0
     for item in raw_chapters:
         if not isinstance(item, dict):
             continue
-        body = str(item.get("text") or item.get("content") or "").strip()
-        if not body:
-            body = str(item.get("summary") or "").strip()
-        if not body:
+        try:
+            start = int(item.get("paragraph_start"))
+            end = int(item.get("paragraph_end"))
+        except (TypeError, ValueError):
             continue
+        start = max(1, start)
+        end = min(len(paragraphs), end)
+        if end < start or start != last_end + 1:
+            raise ValueError("Reader LLM 返回的段落范围不连续")
+        body = "\n\n".join(paragraphs[start - 1 : end]).strip()
+        last_end = end
 
         chapters.append(
             {
@@ -129,6 +152,8 @@ def normalize_llm_parse_result(result):
 
     if len(chapters) < 3:
         raise ValueError("Reader LLM 拆分章节少于 3 个")
+    if last_end != len(paragraphs):
+        raise ValueError("Reader LLM 未覆盖全部原文段落")
 
     return {
         "chapters": chapters,
@@ -206,4 +231,3 @@ def parse_chapters(text):
         "mode": "fallback",
         "warning": "未识别到标准章节标题，已按段落自动拆分；建议使用“第一章 标题 正文”或单独章节标题行。",
     }
-
