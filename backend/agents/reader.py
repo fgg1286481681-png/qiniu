@@ -5,7 +5,7 @@ from trace_utils import TraceTimer
 
 
 class ReaderAgent:
-    """Reader Agent: AI first, rule-based parser fallback."""
+    """Reader Agent: local chapter detection first, LLM only as low-confidence assist."""
 
     name = "Reader Agent"
 
@@ -22,19 +22,27 @@ class ReaderAgent:
         attempts = 0
         usage = None
         fallback_reason = None
+        parse_result = parse_chapters(text)
+        source = "rule"
         try:
-            if self.provider:
+            should_try_llm = (
+                self.provider
+                and (
+                    parse_result.get("confidence", 0) < 0.45
+                    or len(parse_result.get("chapters", [])) < 3
+                )
+            )
+            if should_try_llm:
                 provider_result = self.provider.parse(text)
                 parse_result = provider_result["parse_result"]
                 attempts = provider_result["attempts"]
                 usage = provider_result["usage"]
                 source = "llm"
-            else:
-                parse_result = parse_chapters(text)
         except Exception as exc:
-            parse_result = parse_chapters(text)
             fallback_reason = str(exc)
-            parse_result["warning"] = f"Reader AI 调用失败，已回退规则解析：{fallback_reason}"
+            warnings = parse_result.setdefault("warnings", [])
+            warnings.append(f"Reader AI 辅助识别失败，已保留本地识别结果：{fallback_reason}")
+            parse_result["warning"] = "；".join(warnings) if warnings else parse_result.get("warning")
 
         return {
             "parse_result": parse_result,
@@ -301,6 +309,9 @@ CHINESE_NUMBER_MAP = {
 SPECIAL_CHAPTER_TITLES = {"序章", "楔子", "引子", "前言", "尾声", "后记"}
 SOFT_SPECIAL_TITLES = {"番外"}
 TERMINAL_PUNCTUATION = "。！？；?!;"
+SECTION_TITLE_PATTERN = re.compile(
+    r"^(?:第\s*[一二两三四五六七八九十百千万零〇\d]+\s*[部卷篇集]|[上下中前后终][部卷篇]|卷\s*[一二两三四五六七八九十百千万零〇\d]+)(?:\s+\S.*)?$"
+)
 
 
 def chinese_number_to_int(value):
@@ -369,10 +380,54 @@ def score_candidate(line, kind, number, previous_blank, next_blank):
     return max(0.0, min(score, 1.0))
 
 
+def looks_like_numeric_noise(line):
+    text = line.strip()
+    starts_numeric = bool(re.match(r"^\d", text))
+    if ("%" in text or "％" in text) and starts_numeric:
+        return "疑似百分比或统计行"
+    if re.match(r"^\d+(?:\.\d+){1,3}$", text):
+        return "疑似小数或日期"
+    if re.match(r"^\d{3,4}[.．/-]\d{1,2}(?:[.．/-]\d{1,2})?(?:\D.*)?$", text):
+        return "疑似日期"
+    if re.match(r"^\d+[.．]\d+", text):
+        return "疑似小数编号"
+    return None
+
+
+def build_rejected_candidate(line, line_index, offset, reason):
+    return {
+        "line_index": line_index,
+        "offset": offset,
+        "title": strip_heading_marks(line) or line.strip(),
+        "number": None,
+        "kind": "numeric_noise",
+        "score": 0.0,
+        "inline_body": "",
+        "excluded": True,
+        "reason": reason,
+    }
+
+
+def looks_like_section_heading(line):
+    stripped = strip_heading_marks(line)
+    if not stripped or len(stripped) > 28:
+        return False
+    if any(mark in stripped for mark in TERMINAL_PUNCTUATION):
+        return False
+    if SECTION_TITLE_PATTERN.match(stripped):
+        return True
+    if re.match(r"^[一二两三四五六七八九十百千万零〇\d]{1,4}[部卷篇集]\s*\S*$", stripped):
+        return True
+    return False
+
+
 def build_candidate(line, line_index, offset, previous_blank, next_blank):
     stripped = strip_heading_marks(line)
     if not stripped:
         return None
+    noise_reason = looks_like_numeric_noise(stripped)
+    if noise_reason:
+        return build_rejected_candidate(line, line_index, offset, noise_reason)
 
     patterns = [
         (
@@ -419,6 +474,11 @@ def build_candidate(line, line_index, offset, previous_blank, next_blank):
         }
         number = english_numbers.get(str(raw_number).lower(), chinese_number_to_int(raw_number))
         rest = match.groupdict().get("rest") or ""
+        if kind == "numbered":
+            if number is not None and number > 300:
+                return build_rejected_candidate(line, line_index, offset, "疑似年份或统计编号")
+            if rest and len(rest.strip()) > 48:
+                return build_rejected_candidate(line, line_index, offset, "数字编号后的标题过长，疑似正文或统计句")
         break
 
     special = stripped in SPECIAL_CHAPTER_TITLES or any(
@@ -442,6 +502,8 @@ def build_candidate(line, line_index, offset, previous_blank, next_blank):
         "kind": kind,
         "score": score,
         "inline_body": inline_body,
+        "excluded": False,
+        "reason": None,
     }
 
 
@@ -449,6 +511,7 @@ def detect_chapter_candidates(text):
     lines = text.splitlines(keepends=True)
     plain_lines = [line.rstrip("\r\n") for line in lines]
     candidates = []
+    sections = []
     offset = 0
     for index, raw_line in enumerate(lines):
         line = raw_line.rstrip("\r\n")
@@ -457,8 +520,73 @@ def detect_chapter_candidates(text):
         candidate = build_candidate(line, index, offset, previous_blank, next_blank)
         if candidate:
             candidates.append(candidate)
+        elif previous_blank and next_blank and looks_like_section_heading(line):
+            sections.append(
+                {
+                    "line_index": index,
+                    "offset": offset,
+                    "title": strip_heading_marks(line),
+                    "kind": "section",
+                    "score": 0.7,
+                    "excluded": True,
+                    "reason": "识别为部/卷/篇层级标题",
+                }
+            )
         offset += len(raw_line)
-    return candidates
+    sections.extend(infer_plain_sections(plain_lines, candidates))
+    attach_section_context(candidates, sections)
+    return sorted([*candidates, *sections], key=lambda item: item["offset"])
+
+
+def infer_plain_sections(lines, candidates):
+    numbered_lines = {
+        item["line_index"]
+        for item in candidates
+        if not item.get("excluded") and item.get("kind") == "numbered" and item.get("number") == 1
+    }
+    sections = []
+    offset = 0
+    line_offsets = []
+    for line in lines:
+        line_offsets.append(offset)
+        offset += len(line) + 1
+
+    for index, line in enumerate(lines):
+        stripped = strip_heading_marks(line)
+        previous_blank = index == 0 or not lines[index - 1].strip()
+        next_blank = index + 1 >= len(lines) or not lines[index + 1].strip()
+        if not (previous_blank and next_blank and stripped):
+            continue
+        if len(stripped) > 18 or any(mark in stripped for mark in TERMINAL_PUNCTUATION):
+            continue
+        if build_candidate(line, index, line_offsets[index], previous_blank, next_blank):
+            continue
+        lookahead = range(index + 1, min(len(lines), index + 8))
+        if any(line_number in numbered_lines for line_number in lookahead):
+            sections.append(
+                {
+                    "line_index": index,
+                    "offset": line_offsets[index],
+                    "title": stripped,
+                    "kind": "section",
+                    "score": 0.62,
+                    "excluded": True,
+                    "reason": "短标题后出现重新编号小节，识别为层级标题",
+                }
+            )
+    return sections
+
+
+def attach_section_context(candidates, sections):
+    active_section = None
+    section_items = sorted(sections, key=lambda item: item["offset"])
+    section_index = 0
+    for candidate in sorted(candidates, key=lambda item: item["offset"]):
+        while section_index < len(section_items) and section_items[section_index]["offset"] < candidate["offset"]:
+            active_section = section_items[section_index]["title"]
+            section_index += 1
+        if active_section and not candidate.get("excluded"):
+            candidate["section"] = active_section
 
 
 def select_chapter_boundaries(candidates, text_length):
@@ -466,18 +594,23 @@ def select_chapter_boundaries(candidates, text_length):
         return [], 0.0, []
 
     warnings = []
-    selected = [item for item in candidates if item["score"] >= 0.55]
+    selected = [item for item in candidates if not item.get("excluded") and item["score"] >= 0.55]
     if len(selected) < 3:
-        selected = [item for item in candidates if item["score"] >= 0.45]
+        selected = [item for item in candidates if not item.get("excluded") and item["score"] >= 0.45]
     selected.sort(key=lambda item: item["offset"])
 
     filtered = []
     previous_number = None
+    previous_section = None
     for candidate in selected:
         if filtered and candidate["offset"] - filtered[-1]["offset"] < 5:
             if candidate["score"] > filtered[-1]["score"]:
                 filtered[-1] = candidate
             continue
+        current_section = candidate.get("section")
+        if current_section != previous_section:
+            previous_number = None
+            previous_section = current_section
         if previous_number is not None and candidate["number"] is not None:
             if candidate["number"] < previous_number:
                 candidate = {**candidate, "score": max(0, candidate["score"] - 0.2)}
@@ -534,7 +667,10 @@ def split_by_boundaries(text, boundaries):
             if part
         ).strip()
         if body:
-            chapters.append(chapter_from_body(len(chapters), boundary["title"], body))
+            title = boundary["title"]
+            if boundary.get("section") and not title.startswith(f"{boundary['section']} / "):
+                title = f"{boundary['section']} / {title}"
+            chapters.append(chapter_from_body(len(chapters), title, body))
     return chapters
 
 
@@ -545,7 +681,10 @@ def sanitize_candidates(candidates):
             "title": item["title"],
             "kind": item["kind"],
             "score": round(item["score"], 4),
-            "number": item["number"],
+            "number": item.get("number"),
+            "section": item.get("section"),
+            "excluded": bool(item.get("excluded")),
+            "reason": item.get("reason"),
         }
         for item in candidates[:30]
     ]

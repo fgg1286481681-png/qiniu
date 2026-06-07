@@ -280,6 +280,25 @@ textarea {
   font-size: 13px;
 }
 
+.candidate-preview {
+  margin: 8px 0 10px;
+  font-size: 13px;
+}
+
+.candidate-preview summary {
+  cursor: pointer;
+  color: #2f5f9d;
+}
+
+.candidate-preview li.excluded {
+  color: #8a6470;
+}
+
+.candidate-preview li.excluded span {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
 .generate-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

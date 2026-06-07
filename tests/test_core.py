@@ -264,6 +264,51 @@ Chapter 3 Tape
         self.assertEqual(result["mode"], "soft_heading")
         self.assertEqual(len(result["chapters"]), 3)
 
+    def test_parse_chapters_filters_numeric_noise(self):
+        text = """第一部 测试
+
+一、开端
+第一段剧情。
+
+2.5
+这是一个小数，不是章节。
+
+1999.3.5
+这是一个日期，不是章节。
+
+92.1%的公民同意本计划。
+这是统计句，不是章节。
+
+二、发展
+第二段剧情。
+
+三、结尾
+第三段剧情。"""
+        result = parse_chapters(text)
+        titles = [item["title"] for item in result["chapters"]]
+        self.assertIn("第一部 测试 / 一、开端", titles)
+        self.assertIn("第一部 测试 / 二、发展", titles)
+        self.assertNotIn("2.5", titles)
+        self.assertNotIn("1999.3.5", titles)
+        self.assertTrue(any(item.get("excluded") for item in result["candidates"]))
+
+    def test_parse_chapters_attaches_plain_section_context(self):
+        text = """接过世界
+
+一、纪元初两小时
+第一段剧情。
+
+二、第五代
+第二段剧情。
+
+三、最高领导人
+第三段剧情。"""
+        result = parse_chapters(text)
+        titles = [item["title"] for item in result["chapters"]]
+        self.assertEqual(titles[0], "接过世界 / 一、纪元初两小时")
+        self.assertEqual(titles[1], "接过世界 / 二、第五代")
+        self.assertEqual(titles[2], "接过世界 / 三、最高领导人")
+
     def test_parse_chapters_avoids_inline_false_positive(self):
         text = """林夏翻到书里的第一章，发现那只是教材目录，不是故事标题。
 她继续往下读，雨声越来越急。
@@ -437,11 +482,19 @@ Chapter 3 Tape
         self.assertNotIn("许澄却", names)
         self.assertNotIn("并由周岚", names)
 
-    def test_reader_fallback_is_marked_degraded(self):
+    def test_reader_local_high_confidence_skips_broken_provider(self):
         result = ReaderAgent(provider=BrokenReaderProvider()).run(SOURCE)
+        self.assertEqual(result["trace"]["status"], "success")
+        self.assertEqual(result["trace"]["source"], "rule")
+        self.assertIsNone(result["trace"]["fallback_reason"])
+
+    def test_reader_low_confidence_llm_failure_keeps_local_result(self):
+        low_confidence_source = "没有标题的第一段。\n\n没有标题的第二段。\n\n没有标题的第三段。"
+        result = ReaderAgent(provider=BrokenReaderProvider()).run(low_confidence_source)
         self.assertEqual(result["trace"]["status"], "degraded")
         self.assertEqual(result["trace"]["source"], "rule")
         self.assertIn("provider unavailable", result["trace"]["fallback_reason"])
+        self.assertGreaterEqual(len(result["parse_result"]["chapters"]), 3)
 
     def test_orchestrator_repairs_at_most_two_rounds(self):
         writer = RepairingWriter()

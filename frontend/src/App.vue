@@ -51,6 +51,15 @@
           <ul v-if="parseWarnings.length" class="parse-warnings">
             <li v-for="item in parseWarnings" :key="item">{{ item }}</li>
           </ul>
+          <details v-if="parseCandidates.length" class="candidate-preview">
+            <summary>查看候选标题</summary>
+            <ul>
+              <li v-for="item in parseCandidates" :key="`${item.line}-${item.title}`" :class="{ excluded: item.excluded }">
+                <span>第 {{ item.line }} 行：{{ item.title }}</span>
+                <em>{{ item.excluded ? `已排除：${item.reason || '低置信度'}` : `保留 · ${candidateKindLabel(item.kind)} · ${candidateScoreLabel(item.score)}` }}</em>
+              </li>
+            </ul>
+          </details>
           <ul v-if="chapters.length">
             <li v-for="chapter in chapters" :key="chapter.chapter_id">
               <span>{{ chapter.title }}</span>
@@ -357,6 +366,7 @@ const parseWarning = ref("");
 const parseWarnings = ref([]);
 const parseConfidence = ref(0);
 const candidateCount = ref(0);
+const parseCandidates = ref([]);
 const agentTrace = ref([]);
 const progress = ref(0);
 const currentProjectId = ref("");
@@ -668,6 +678,24 @@ function syncParseInfo(data) {
   parseWarnings.value = data.warnings || [];
   parseConfidence.value = typeof data.confidence === "number" ? data.confidence : 0;
   candidateCount.value = data.candidate_count || data.candidates?.length || 0;
+  parseCandidates.value = data.candidates || [];
+}
+
+function candidateKindLabel(kind) {
+  return {
+    standard: "标准标题",
+    chapter_word: "章节字样",
+    english: "英文标题",
+    numbered: "数字小节",
+    special: "特殊章节",
+    soft_special: "扩展章节",
+    section: "层级标题",
+    numeric_noise: "数字噪声",
+  }[kind] || kind || "候选";
+}
+
+function candidateScoreLabel(score) {
+  return typeof score === "number" ? `${Math.round(score * 100)}%` : "--";
 }
 
 async function analyzeText() {
