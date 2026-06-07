@@ -437,10 +437,33 @@ textarea {
   margin-bottom: 14px;
 }
 
+.quality-status,
+.ai-review-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quality-status {
+  padding: 8px 0;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.quality-section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  color: #43515e;
+}
+
 .quality-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.ai-score-grid {
+  margin-bottom: 8px;
 }
 
 .quality-item {
@@ -459,6 +482,58 @@ textarea {
   display: block;
   margin-top: 3px;
   font-size: 18px;
+}
+
+.severity-summary {
+  margin: 8px 0;
+  color: #52616e;
+  font-size: 13px;
+}
+
+.diagnosis-list {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnosis-item {
+  border-left: 3px solid #9aa7b2;
+  background: #f7f9fb;
+  padding: 9px 10px;
+}
+
+.diagnosis-item > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnosis-item p {
+  margin: 6px 0 3px;
+}
+
+.diagnosis-item small {
+  color: #5c6873;
+}
+
+.severity-badge {
+  min-width: 24px;
+  padding: 2px 5px;
+  color: #ffffff;
+  text-align: center;
+  font-size: 11px;
+}
+
+.severity-badge.high,
+.severity-badge.critical {
+  background: #b42318;
+}
+
+.severity-badge.medium {
+  background: #a15c00;
+}
+
+.severity-badge.low {
+  background: #42627a;
 }
 
 .tabs {

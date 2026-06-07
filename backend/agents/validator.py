@@ -44,8 +44,15 @@ class ValidatorAgent:
                 fallback_reason = str(exc)
                 validation["ai_review"] = {
                     "score": None,
+                    "ai_draft_score": None,
+                    "scores": {
+                        "fidelity": None,
+                        "performability": None,
+                        "character_dialogue_consistency": None,
+                    },
                     "issues": [],
                     "requires_rewrite": False,
+                    "rewrite_scope": [],
                     "error": fallback_reason,
                 }
 
@@ -58,9 +65,10 @@ class ValidatorAgent:
         if not validation["valid"]:
             summary = f"发现 {len(validation['errors'])} 个 Schema 或引用问题"
         elif requires_rewrite:
-            summary = f"结构校验通过，AI 质量评分 {ai_review.get('score')}，建议局部重写"
+            summary = f"结构校验通过，AI 初稿评分 {ai_review.get('ai_draft_score')}，建议局部重写"
         else:
-            score_text = f"，AI 质量评分 {ai_review.get('score')}" if ai_review.get("score") is not None else ""
+            score = ai_review.get("ai_draft_score")
+            score_text = f"，AI 初稿评分 {score}" if score is not None else ""
             summary = f"Schema 和引用校验通过{score_text}，来源：{source}"
 
         return {
@@ -114,58 +122,121 @@ def build_validator_provider():
 
 VALIDATOR_SYSTEM_PROMPT = """你是 Novel2Script 的 Validator Agent。
 输入是一份已经通过 JSON Schema 的中文短剧剧本。
-你只负责质量评审，不要重写全文。检查：
-1. 场景是否覆盖事件主线；
-2. 人物行为和对白是否一致；
-3. 是否存在明显幻觉、逻辑断裂；
-4. 场景是否有目的、冲突和情绪转折；
-5. 对白是否过度模板化。
+你只负责“剧本初稿质量诊断”，不要重写全文，也不要把评分描述为行业标准。
+
+按三个维度分别给出 0-100 整数分：
+1. fidelity（改编忠实度，40%）：主要事实、人物关系、主线冲突和明显幻觉；
+2. performability（场景可演性，35%）：动作、对白、目的、冲突及是否只是摘要；
+3. character_dialogue_consistency（人物与对白一致性，25%）：人物行为、知识边界、对白归属和模板化表达。
 
 只输出严格 JSON：
 {
-  "score": 0到100的整数,
+  "scores": {
+    "fidelity": 0到100的整数,
+    "performability": 0到100的整数,
+    "character_dialogue_consistency": 0到100的整数
+  },
   "issues": [
     {
-      "type": "continuity|character|fidelity|dialogue|scene",
-      "severity": "low|medium|high|critical",
+      "type": "fidelity|performability|character_dialogue_consistency",
+      "severity": "low|medium|high",
       "scene_id": "scene_001或空字符串",
       "message": "问题描述",
-      "suggested_fix": "修复建议"
+      "suggestion": "可执行的修复建议",
+      "rewrite_scope": ["scene_001"]
     }
   ],
   "requires_rewrite": true或false,
   "rewrite_scope": ["scene_001"]
 }
-只有 high 或 critical 问题才应将 requires_rewrite 设为 true。
+只有 high 问题才应将 requires_rewrite 设为 true。
+rewrite_scope 只包含确实需要修改的场景 ID。
 """
 
 
 def normalize_ai_review(result):
+    raw_scores = result.get("scores") if isinstance(result.get("scores"), dict) else {}
+    scores = {
+        "fidelity": normalize_score(raw_scores.get("fidelity")),
+        "performability": normalize_score(raw_scores.get("performability")),
+        "character_dialogue_consistency": normalize_score(
+            raw_scores.get("character_dialogue_consistency")
+        ),
+    }
+    if all(score is not None for score in scores.values()):
+        ai_draft_score = round(
+            scores["fidelity"] * 0.40
+            + scores["performability"] * 0.35
+            + scores["character_dialogue_consistency"] * 0.25
+        )
+    else:
+        ai_draft_score = normalize_score(
+            result.get("ai_draft_score", result.get("score"))
+        )
+
     issues = []
     for item in result.get("issues") or []:
         if not isinstance(item, dict):
             continue
+        severity = str(item.get("severity") or "low").lower()
+        if severity == "critical":
+            severity = "high"
+        if severity not in {"low", "medium", "high"}:
+            severity = "low"
+        scene_id = str(item.get("scene_id") or "")
+        item_scope = [
+            str(scope)
+            for scope in item.get("rewrite_scope") or []
+            if str(scope)
+        ]
+        if not item_scope and scene_id:
+            item_scope = [scene_id]
         issues.append(
             {
                 "type": str(item.get("type") or "scene"),
-                "severity": str(item.get("severity") or "low"),
-                "scene_id": str(item.get("scene_id") or ""),
+                "severity": severity,
+                "scene_id": scene_id,
                 "message": str(item.get("message") or ""),
-                "suggested_fix": str(item.get("suggested_fix") or ""),
+                "suggestion": str(
+                    item.get("suggestion")
+                    or item.get("suggested_fix")
+                    or ""
+                ),
+                "rewrite_scope": item_scope,
             }
         )
-    score = result.get("score")
-    try:
-        score = max(0, min(100, int(score)))
-    except (TypeError, ValueError):
-        score = None
+
+    rewrite_scope = [
+        str(item)
+        for item in result.get("rewrite_scope") or []
+        if str(item)
+    ]
+    if not rewrite_scope:
+        rewrite_scope = list(
+            dict.fromkeys(
+                scope
+                for issue in issues
+                if issue["severity"] == "high"
+                for scope in issue["rewrite_scope"]
+            )
+        )
+    has_high_issue = any(issue["severity"] == "high" for issue in issues)
 
     return {
-        "score": score,
+        "score": ai_draft_score,
+        "ai_draft_score": ai_draft_score,
+        "scores": scores,
         "issues": issues,
-        "requires_rewrite": bool(result.get("requires_rewrite")),
-        "rewrite_scope": [str(item) for item in result.get("rewrite_scope") or []],
+        "requires_rewrite": has_high_issue,
+        "rewrite_scope": rewrite_scope,
     }
+
+
+def normalize_score(value):
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 def load_schema():
@@ -300,6 +371,17 @@ def business_errors(script):
                         "path": f"scenes[{scene_index}].elements[{element_index}].character_id",
                         "message": "对白引用了不存在的人物 ID",
                         "suggestion": "改为 characters 中已有的 id。",
+                    }
+                )
+            elif (
+                element.get("type") == "dialogue"
+                and element.get("character_id") not in scene.get("characters", [])
+            ):
+                errors.append(
+                    {
+                        "path": f"scenes[{scene_index}].elements[{element_index}].character_id",
+                        "message": "对白人物未列入当前场景人物",
+                        "suggestion": "将对白人物加入场景 characters，或调整对白归属。",
                     }
                 )
             if element.get("event_id") and element.get("event_id") not in event_ids:

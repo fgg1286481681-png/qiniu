@@ -40,6 +40,7 @@ AI 自检通过四个最小 Chat Completions 请求验证模型名称和服务�
 
 - `GET /api/projects` 返回项目元数据列表。
 - `GET /api/projects/{id}` 恢复原文、剧本、YAML、质量指标、Trace 和修复历史。
+- `quality_metrics` 独立返回章节覆盖、事件覆盖、引用一致性、场景完整率，以及三项 AI 初稿诊断和问题列表。
 - `DELETE /api/projects/{id}` 同步删除 SQLite 记录和本地项目目录。
 
 测试与评测：

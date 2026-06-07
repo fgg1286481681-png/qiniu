@@ -60,12 +60,16 @@ def calculate_quality_metrics(script, validation, repair_count=0):
                     covered_events.add(event_id)
 
     ai_review = validation.get("ai_review") or {}
-    severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    severity_counts = {"high": 0, "medium": 0, "low": 0}
     for issue in ai_review.get("issues", []):
         severity = issue.get("severity")
+        if severity == "critical":
+            severity = "high"
         if severity in severity_counts:
             severity_counts[severity] += 1
 
+    ai_draft_score = ai_review.get("ai_draft_score", ai_review.get("score"))
+    ai_scores = ai_review.get("scores") or {}
     return {
         "chapter_coverage": ratio(len(covered_chapters), len(chapter_ids)),
         "event_coverage": ratio(len(covered_events), len(event_ids)),
@@ -73,10 +77,24 @@ def calculate_quality_metrics(script, validation, repair_count=0):
         "reference_consistency": ratio(valid_references, total_references),
         "scene_completeness": ratio(complete_scene_count, len(scenes)),
         "schema_valid": bool(validation.get("valid")),
+        "validator_ai_score": ai_draft_score,
+        "ai_scores": {
+            "fidelity": ai_scores.get("fidelity"),
+            "performability": ai_scores.get("performability"),
+            "character_dialogue_consistency": ai_scores.get(
+                "character_dialogue_consistency"
+            ),
+        },
+        "severity_counts": severity_counts,
         "ai_review": {
-            "score": ai_review.get("score"),
+            "score": ai_draft_score,
+            "ai_draft_score": ai_draft_score,
+            "scores": ai_scores,
             "severity_counts": severity_counts,
             "requires_rewrite": bool(ai_review.get("requires_rewrite")),
+            "issues": ai_review.get("issues") or [],
+            "rewrite_scope": ai_review.get("rewrite_scope") or [],
+            "error": ai_review.get("error"),
         },
         "repair_triggered": repair_count > 0,
         "repair_count": repair_count,

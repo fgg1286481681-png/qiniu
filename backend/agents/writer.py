@@ -377,6 +377,11 @@ def repair_script_rules(script, plan):
             item = deepcopy(element)
             if item.get("type") == "dialogue" and item.get("character_id") not in character_ids:
                 item["character_id"] = scene["characters"][0]
+            if (
+                item.get("type") == "dialogue"
+                and item.get("character_id") not in scene["characters"]
+            ):
+                scene["characters"].append(item["character_id"])
             if item.get("event_id") not in event_ids:
                 item.pop("event_id", None)
             elements.append(item)

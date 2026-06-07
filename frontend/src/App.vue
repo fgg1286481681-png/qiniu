@@ -140,20 +140,50 @@
 
         <div class="quality-panel">
           <div class="panel-title small">
-            <h3>质量指标</h3>
+            <h3>初稿质量诊断</h3>
             <span v-if="qualityMetrics.repair_triggered">已修复 {{ qualityMetrics.repair_count }} 轮</span>
           </div>
+          <div class="quality-status">
+            <span>结构状态</span>
+            <strong :class="{ pass: qualityMetrics.schema_valid, danger: qualityMetrics.schema_valid === false }">
+              {{ qualityMetrics.schema_valid === true ? "Schema 与引用通过" : qualityMetrics.schema_valid === false ? "结构校验失败" : "待检测" }}
+            </strong>
+          </div>
+          <h4 class="quality-section-title">规则指标</h4>
           <div class="quality-grid">
             <div v-for="metric in qualityCards" :key="metric.label" class="quality-item">
               <span>{{ metric.label }}</span>
               <strong>{{ metric.value }}</strong>
             </div>
           </div>
-          <p v-if="qualityMetrics.ai_review?.score !== null && qualityMetrics.ai_review?.score !== undefined">
-            Validator AI 评分：<strong>{{ qualityMetrics.ai_review.score }}</strong>
-            · 高风险 {{ highIssueCount }} 项
-          </p>
-          <p v-else class="muted">AI 评分与规则指标分开展示，当前暂无 AI 评分。</p>
+          <template v-if="aiDraftScore !== null">
+            <div class="ai-review-heading">
+              <h4 class="quality-section-title">AI 初稿诊断</h4>
+              <strong>{{ aiDraftScore }} / 100</strong>
+            </div>
+            <div class="quality-grid ai-score-grid">
+              <div v-for="metric in aiScoreCards" :key="metric.label" class="quality-item">
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.value }}</strong>
+              </div>
+            </div>
+            <p class="severity-summary">
+              高风险 {{ severityCounts.high || 0 }} 项 ·
+              中风险 {{ severityCounts.medium || 0 }} 项 ·
+              低风险 {{ severityCounts.low || 0 }} 项
+            </p>
+            <div v-if="aiIssues.length" class="diagnosis-list">
+              <article v-for="(issue, index) in aiIssues" :key="`${issue.scene_id}-${index}`" class="diagnosis-item">
+                <div>
+                  <span :class="['severity-badge', issue.severity]">{{ severityLabel(issue.severity) }}</span>
+                  <strong>{{ issue.scene_id || "全局问题" }}</strong>
+                </div>
+                <p>{{ issue.message }}</p>
+                <small>{{ issue.suggestion || issue.suggested_fix }}</small>
+              </article>
+            </div>
+          </template>
+          <p v-else class="muted">当前暂无 AI 初稿诊断，规则指标仍可正常使用。</p>
         </div>
 
         <div class="tabs">
@@ -213,8 +243,17 @@
             <span :class="{ pass: item.after_validation?.valid, danger: !item.after_validation?.valid }">
               {{ item.after_validation?.valid ? "修复后通过" : "仍需修复" }}
             </span>
+            <p v-if="item.reason">修复原因：{{ item.reason }}</p>
+            <p v-if="item.rewrite_scope?.length">修改范围：{{ item.rewrite_scope.join("、") }}</p>
             <p>修复前问题：{{ item.before_validation?.errors?.length || 0 }} 项</p>
             <p>修复后问题：{{ item.after_validation?.errors?.length || 0 }} 项</p>
+            <p v-if="item.before_metrics">
+              AI 初稿评分：{{ metricScore(item.before_metrics) }} → {{ metricScore(item.after_metrics) }}
+            </p>
+            <p v-if="item.before_metrics">
+              事件覆盖：{{ formatPercent(item.before_metrics.event_coverage) }} →
+              {{ formatPercent(item.after_metrics?.event_coverage) }}
+            </p>
           </article>
           <p v-if="!repairHistory.length" class="muted">本项目未触发自动修复</p>
         </div>
@@ -362,16 +401,32 @@ const qualityCards = computed(() => {
   return [
     { label: "章节覆盖", value: formatPercent(metrics.chapter_coverage) },
     { label: "事件覆盖", value: formatPercent(metrics.event_coverage) },
-    { label: "对白占比", value: formatPercent(metrics.dialogue_ratio) },
     { label: "引用一致", value: formatPercent(metrics.reference_consistency) },
     { label: "场景完整", value: formatPercent(metrics.scene_completeness) },
-    { label: "Schema", value: metrics.schema_valid === true ? "通过" : metrics.schema_valid === false ? "失败" : "--" },
   ];
 });
-const highIssueCount = computed(() => {
-  const counts = qualityMetrics.value?.ai_review?.severity_counts || {};
-  return (counts.high || 0) + (counts.critical || 0);
+const aiDraftScore = computed(() => {
+  const value = qualityMetrics.value?.validator_ai_score
+    ?? qualityMetrics.value?.ai_review?.ai_draft_score
+    ?? qualityMetrics.value?.ai_review?.score;
+  return value === null || value === undefined ? null : value;
 });
+const aiScores = computed(() => (
+  qualityMetrics.value?.ai_scores
+  || qualityMetrics.value?.ai_review?.scores
+  || {}
+));
+const aiScoreCards = computed(() => [
+  { label: "改编忠实度", value: formatScore(aiScores.value.fidelity) },
+  { label: "场景可演性", value: formatScore(aiScores.value.performability) },
+  { label: "人物与对白", value: formatScore(aiScores.value.character_dialogue_consistency) },
+]);
+const severityCounts = computed(() => (
+  qualityMetrics.value?.severity_counts
+  || qualityMetrics.value?.ai_review?.severity_counts
+  || {}
+));
+const aiIssues = computed(() => qualityMetrics.value?.ai_review?.issues || []);
 const elapsedLabel = computed(() => {
   const minutes = Math.floor(elapsedSeconds.value / 60);
   const seconds = elapsedSeconds.value % 60;
@@ -411,6 +466,26 @@ async function deleteJson(url) {
 
 function formatPercent(value) {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "--";
+}
+
+function formatScore(value) {
+  return typeof value === "number" ? `${value} / 100` : "--";
+}
+
+function metricScore(metrics) {
+  const value = metrics?.validator_ai_score
+    ?? metrics?.ai_review?.ai_draft_score
+    ?? metrics?.ai_review?.score;
+  return typeof value === "number" ? value : "--";
+}
+
+function severityLabel(severity) {
+  return {
+    high: "高",
+    critical: "高",
+    medium: "中",
+    low: "低",
+  }[severity] || "提示";
 }
 
 function formatDuration(value) {

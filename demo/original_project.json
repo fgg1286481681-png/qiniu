@@ -1,4 +1,5 @@
 {
+  "fixture_version": "2.1",
   "project_id": "00000000-0000-4000-8000-000000000001",
   "title": "停电前的最后一单",
   "source_filename": "原创离线演示小说.txt",
@@ -12,7 +13,7 @@
         "source_type": "novel",
         "language": "zh-CN",
         "adaptation_type": "short_drama",
-        "generated_at": "2026-06-06 23:13:07"
+        "generated_at": "2026-06-07 14:39:21"
       },
       "chapters": [
         {
@@ -292,7 +293,7 @@
         ]
       }
     },
-    "yaml": "schema_version: '1.0'\nmetadata:\n  title: 停电前的最后一单\n  source_type: novel\n  language: zh-CN\n  adaptation_type: short_drama\n  generated_at: '2026-06-06 23:13:07'\nchapters:\n- id: chapter_001\n  title: 第一章 停电前的最后一单\n  order: 1\n  word_count: 120\n- id: chapter_002\n  title: 第二章 被夹住的名单\n  order: 2\n  word_count: 116\n- id: chapter_003\n  title: 第三章 雨中的取书人\n  order: 3\n  word_count: 116\n- id: chapter_004\n  title: 第四章 重新开灯\n  order: 4\n  word_count: 139\ncharacters:\n- id: char_001\n  name: 周岚\n  aliases: []\n  role: protagonist\n  description: 周岚 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_002\n  name: 陈放\n  aliases: []\n  role: supporting\n  description: 陈放 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_003\n  name: 许澄\n  aliases: []\n  role: antagonist\n  description: 许澄 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_004\n  name: 陈屿\n  aliases: []\n  role: supporting\n  description: 陈屿 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\nlocations:\n- id: loc_001\n  name: 门口\n  description: 门口，由小说文本中的叙事空间整理而来。\nevents:\n- id: event_001\n  source_chapter: chapter_001\n  summary: 临江社区的旧书店将在月底关门。\n  conflict: 夜里九点，兼职店员许澄整理最后一批订单时，系统突然显示一本绝版地方志被重复售出。\n  emotional_shift: 第一位买家是准备搬走的退休教师周岚，第二位买家则匿名留言，要求当晚取书。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_002\n  source_chapter: chapter_002\n  summary: 许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪多年的父亲也在其中。\n  conflict: 周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史。\n  emotional_shift: 匿名买家不断催促，声称名单涉及私人信息，必须销毁。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_003\n  source_chapter: chapter_003\n  summary: 暴雨导致街区停电，一名戴着雨帽的年轻人来到门口。\n  conflict: 他叫陈屿，是陈放同父异母的弟弟。\n  emotional_shift: 陈屿解释，父亲当年整理名单，是为了证明旧校舍并非危房，却因证据不足被迫离开。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_004\n  source_chapter: chapter_004\n  summary: 许澄用手机照亮柜台，把书、名单和两张订单并排放下。\n  conflict: 她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签。\n  emotional_shift: 陈放第一次读完父亲留下的备注，同意把数字副本捐给社区档案馆。\n  characters:\n  - char_001\n  - char_002\n  - char_003\nscenes:\n- id: scene_001\n  source_chapters:\n  - chapter_001\n  heading:\n    location_id: loc_001\n    time_of_day: morning\n  purpose: 呈现《第一章 停电前的最后一单》中的核心转折\n  conflict: 夜里九点，兼职店员许澄整理最后一批订单时，系统突然显示一本绝版地方志被重复售出。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“临江社区的旧书店将在月底关门”采取行动，现场关系随之发生变化。\n    event_id: event_001\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于临江社区的旧书店将在月底关门，我需要现在作出决定。\n  - type: action\n    text: 人物根据当前冲突继续推进场景行动。\n- id: scene_002\n  source_chapters:\n  - chapter_002\n  heading:\n    location_id: loc_001\n    time_of_day: afternoon\n  purpose: 呈现《第二章 被夹住的名单》中的核心转折\n  conflict: 周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪多年的父亲也在其中”采取行动，现场关系随之发生变化。\n    event_id: event_002\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 匿名买家不断催促，声称名单涉及私人信息，必须销毁。\n- id: scene_003\n  source_chapters:\n  - chapter_003\n  heading:\n    location_id: loc_001\n    time_of_day: night\n  purpose: 呈现《第三章 雨中的取书人》中的核心转折\n  conflict: 他叫陈屿，是陈放同父异母的弟弟。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“暴雨导致街区停电，一名戴着雨帽的年轻人来到门口”采取行动，现场关系随之发生变化。\n    event_id: event_003\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于暴雨导致街区停电，一名戴着雨帽的年轻人来到门口，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“他叫陈屿，是陈放同父异母的弟弟”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 陈屿解释，父亲当年整理名单，是为了证明旧校舍并非危房，却因证据不足被迫离开。\n- id: scene_004\n  source_chapters:\n  - chapter_004\n  heading:\n    location_id: loc_001\n    time_of_day: morning\n  purpose: 呈现《第四章 重新开灯》中的核心转折\n  conflict: 她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“许澄用手机照亮柜台，把书、名单和两张订单并排放下”采取行动，现场关系随之发生变化。\n    event_id: event_004\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于许澄用手机照亮柜台，把书、名单和两张订单并排放下，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 陈放第一次读完父亲留下的备注，同意把数字副本捐给社区档案馆。\nadaptation_notes:\n  retained:\n  - 保留原文主要人物和核心冲突。\n  changed:\n  - 将小说叙述改写为动作、对白和旁白。\n  next_steps:\n  - 建议人工检查人物口吻和场景节奏。\n",
+    "yaml": "schema_version: '1.0'\nmetadata:\n  title: 停电前的最后一单\n  source_type: novel\n  language: zh-CN\n  adaptation_type: short_drama\n  generated_at: '2026-06-07 14:39:21'\nchapters:\n- id: chapter_001\n  title: 第一章 停电前的最后一单\n  order: 1\n  word_count: 120\n- id: chapter_002\n  title: 第二章 被夹住的名单\n  order: 2\n  word_count: 116\n- id: chapter_003\n  title: 第三章 雨中的取书人\n  order: 3\n  word_count: 116\n- id: chapter_004\n  title: 第四章 重新开灯\n  order: 4\n  word_count: 139\ncharacters:\n- id: char_001\n  name: 周岚\n  aliases: []\n  role: protagonist\n  description: 周岚 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_002\n  name: 陈放\n  aliases: []\n  role: supporting\n  description: 陈放 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_003\n  name: 许澄\n  aliases: []\n  role: antagonist\n  description: 许澄 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\n- id: char_004\n  name: 陈屿\n  aliases: []\n  role: supporting\n  description: 陈屿 是从原文中识别出的关键人物。\n  goal: 推动当前情节发展。\nlocations:\n- id: loc_001\n  name: 门口\n  description: 门口，由小说文本中的叙事空间整理而来。\nevents:\n- id: event_001\n  source_chapter: chapter_001\n  summary: 临江社区的旧书店将在月底关门。\n  conflict: 夜里九点，兼职店员许澄整理最后一批订单时，系统突然显示一本绝版地方志被重复售出。\n  emotional_shift: 第一位买家是准备搬走的退休教师周岚，第二位买家则匿名留言，要求当晚取书。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_002\n  source_chapter: chapter_002\n  summary: 许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪多年的父亲也在其中。\n  conflict: 周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史。\n  emotional_shift: 匿名买家不断催促，声称名单涉及私人信息，必须销毁。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_003\n  source_chapter: chapter_003\n  summary: 暴雨导致街区停电，一名戴着雨帽的年轻人来到门口。\n  conflict: 他叫陈屿，是陈放同父异母的弟弟。\n  emotional_shift: 陈屿解释，父亲当年整理名单，是为了证明旧校舍并非危房，却因证据不足被迫离开。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n- id: event_004\n  source_chapter: chapter_004\n  summary: 许澄用手机照亮柜台，把书、名单和两张订单并排放下。\n  conflict: 她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签。\n  emotional_shift: 陈放第一次读完父亲留下的备注，同意把数字副本捐给社区档案馆。\n  characters:\n  - char_001\n  - char_002\n  - char_003\nscenes:\n- id: scene_001\n  source_chapters:\n  - chapter_001\n  heading:\n    location_id: loc_001\n    time_of_day: morning\n  purpose: 呈现《第一章 停电前的最后一单》中的核心转折\n  conflict: 夜里九点，兼职店员许澄整理最后一批订单时，系统突然显示一本绝版地方志被重复售出。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“临江社区的旧书店将在月底关门”采取行动，现场关系随之发生变化。\n    event_id: event_001\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于临江社区的旧书店将在月底关门，我需要现在作出决定。\n  - type: action\n    text: 人物根据当前冲突继续推进场景行动。\n- id: scene_002\n  source_chapters:\n  - chapter_002\n  heading:\n    location_id: loc_001\n    time_of_day: afternoon\n  purpose: 呈现《第二章 被夹住的名单》中的核心转折\n  conflict: 周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪多年的父亲也在其中”采取行动，现场关系随之发生变化。\n    event_id: event_002\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于许澄在书中找到一张二十年前的借阅名单，周岚的名字排在第一行，陈放失踪，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“周岚赶到书店，承认这本书记录着社区旧校舍被拆前的口述历史”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 匿名买家不断催促，声称名单涉及私人信息，必须销毁。\n- id: scene_003\n  source_chapters:\n  - chapter_003\n  heading:\n    location_id: loc_001\n    time_of_day: night\n  purpose: 呈现《第三章 雨中的取书人》中的核心转折\n  conflict: 他叫陈屿，是陈放同父异母的弟弟。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“暴雨导致街区停电，一名戴着雨帽的年轻人来到门口”采取行动，现场关系随之发生变化。\n    event_id: event_003\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于暴雨导致街区停电，一名戴着雨帽的年轻人来到门口，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“他叫陈屿，是陈放同父异母的弟弟”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 陈屿解释，父亲当年整理名单，是为了证明旧校舍并非危房，却因证据不足被迫离开。\n- id: scene_004\n  source_chapters:\n  - chapter_004\n  heading:\n    location_id: loc_001\n    time_of_day: morning\n  purpose: 呈现《第四章 重新开灯》中的核心转折\n  conflict: 她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签。\n  characters:\n  - char_001\n  - char_002\n  - char_003\n  elements:\n  - type: action\n    text: 门口里，周岚围绕“许澄用手机照亮柜台，把书、名单和两张订单并排放下”采取行动，现场关系随之发生变化。\n    event_id: event_004\n  - type: dialogue\n    character_id: char_001\n    text: 我是周岚。为了推动当前情节发展，关于许澄用手机照亮柜台，把书、名单和两张订单并排放下，我需要现在作出决定。\n  - type: dialogue\n    character_id: char_002\n    text: 先解决“她提出不出售原件，而是现场扫描存档，并由周岚决定是否补签”，否则你的决定只会让局面更复杂。\n  - type: narration\n    text: 陈放第一次读完父亲留下的备注，同意把数字副本捐给社区档案馆。\nadaptation_notes:\n  retained:\n  - 保留原文主要人物和核心冲突。\n  changed:\n  - 将小说叙述改写为动作、对白和旁白。\n  next_steps:\n  - 建议人工检查人物口吻和场景节奏。\n",
     "validation": {
       "valid": true,
       "errors": [],
@@ -303,7 +304,7 @@
           "source_type": "novel",
           "language": "zh-CN",
           "adaptation_type": "short_drama",
-          "generated_at": "2026-06-06 23:13:07"
+          "generated_at": "2026-06-07 14:39:21"
         },
         "chapters": [
           {
@@ -582,6 +583,27 @@
             "建议人工检查人物口吻和场景节奏。"
           ]
         }
+      },
+      "ai_review": {
+        "score": 82,
+        "ai_draft_score": 82,
+        "scores": {
+          "fidelity": 88,
+          "performability": 78,
+          "character_dialogue_consistency": 76
+        },
+        "issues": [
+          {
+            "type": "character_dialogue_consistency",
+            "severity": "medium",
+            "scene_id": "scene_002",
+            "message": "部分对白仍偏直接说明，可继续增强人物口吻差异。",
+            "suggestion": "人工润色周岚与陈放的表达方式。",
+            "rewrite_scope": []
+          }
+        ],
+        "requires_rewrite": false,
+        "rewrite_scope": []
       }
     },
     "quality_metrics": {
@@ -591,15 +613,43 @@
       "reference_consistency": 1.0,
       "scene_completeness": 1.0,
       "schema_valid": true,
+      "validator_ai_score": 82,
+      "ai_scores": {
+        "fidelity": 88,
+        "performability": 78,
+        "character_dialogue_consistency": 76
+      },
+      "severity_counts": {
+        "high": 0,
+        "medium": 1,
+        "low": 0
+      },
       "ai_review": {
-        "score": null,
+        "score": 82,
+        "ai_draft_score": 82,
+        "scores": {
+          "fidelity": 88,
+          "performability": 78,
+          "character_dialogue_consistency": 76
+        },
         "severity_counts": {
-          "critical": 0,
           "high": 0,
-          "medium": 0,
+          "medium": 1,
           "low": 0
         },
-        "requires_rewrite": false
+        "requires_rewrite": false,
+        "issues": [
+          {
+            "type": "character_dialogue_consistency",
+            "severity": "medium",
+            "scene_id": "scene_002",
+            "message": "部分对白仍偏直接说明，可继续增强人物口吻差异。",
+            "suggestion": "人工润色周岚与陈放的表达方式。",
+            "rewrite_scope": []
+          }
+        ],
+        "rewrite_scope": [],
+        "error": null
       },
       "repair_triggered": true,
       "repair_count": 1
@@ -894,7 +944,7 @@
         "source_type": "novel",
         "language": "zh-CN",
         "adaptation_type": "short_drama",
-        "generated_at": "2026-06-06 23:13:07"
+        "generated_at": "2026-06-07 14:39:21"
       },
       "chapters": [
         {
@@ -1179,11 +1229,40 @@
           "suggestion": "至少保留 3 项"
         }
       ],
-      "script": null
+      "script": null,
+      "ai_review": {
+        "score": 66,
+        "ai_draft_score": 66,
+        "scores": {
+          "fidelity": 82,
+          "performability": 48,
+          "character_dialogue_consistency": 66
+        },
+        "issues": [
+          {
+            "type": "performability",
+            "severity": "high",
+            "scene_id": "scene_001",
+            "message": "首场景元素不足，无法形成完整的动作与对白推进。",
+            "suggestion": "补充围绕重复订单冲突的可执行动作。",
+            "rewrite_scope": [
+              "scene_001"
+            ]
+          }
+        ],
+        "requires_rewrite": true,
+        "rewrite_scope": [
+          "scene_001"
+        ]
+      }
     },
     "repair_history": [
       {
         "round": 1,
+        "reason": "Schema 校验失败，且首场景缺少完整动作推进",
+        "rewrite_scope": [
+          "scene_001"
+        ],
         "before_script": {
           "schema_version": "1.0",
           "metadata": {
@@ -1191,7 +1270,7 @@
             "source_type": "novel",
             "language": "zh-CN",
             "adaptation_type": "short_drama",
-            "generated_at": "2026-06-06 23:13:07"
+            "generated_at": "2026-06-07 14:39:21"
           },
           "chapters": [
             {
@@ -1476,7 +1555,84 @@
               "suggestion": "至少保留 3 项"
             }
           ],
-          "script": null
+          "script": null,
+          "ai_review": {
+            "score": 66,
+            "ai_draft_score": 66,
+            "scores": {
+              "fidelity": 82,
+              "performability": 48,
+              "character_dialogue_consistency": 66
+            },
+            "issues": [
+              {
+                "type": "performability",
+                "severity": "high",
+                "scene_id": "scene_001",
+                "message": "首场景元素不足，无法形成完整的动作与对白推进。",
+                "suggestion": "补充围绕重复订单冲突的可执行动作。",
+                "rewrite_scope": [
+                  "scene_001"
+                ]
+              }
+            ],
+            "requires_rewrite": true,
+            "rewrite_scope": [
+              "scene_001"
+            ]
+          }
+        },
+        "before_metrics": {
+          "chapter_coverage": 1.0,
+          "event_coverage": 1.0,
+          "dialogue_ratio": 0.5,
+          "reference_consistency": 0.9787,
+          "scene_completeness": 0.75,
+          "schema_valid": false,
+          "validator_ai_score": 66,
+          "ai_scores": {
+            "fidelity": 82,
+            "performability": 48,
+            "character_dialogue_consistency": 66
+          },
+          "severity_counts": {
+            "high": 1,
+            "medium": 0,
+            "low": 0
+          },
+          "ai_review": {
+            "score": 66,
+            "ai_draft_score": 66,
+            "scores": {
+              "fidelity": 82,
+              "performability": 48,
+              "character_dialogue_consistency": 66
+            },
+            "severity_counts": {
+              "high": 1,
+              "medium": 0,
+              "low": 0
+            },
+            "requires_rewrite": true,
+            "issues": [
+              {
+                "type": "performability",
+                "severity": "high",
+                "scene_id": "scene_001",
+                "message": "首场景元素不足，无法形成完整的动作与对白推进。",
+                "suggestion": "补充围绕重复订单冲突的可执行动作。",
+                "rewrite_scope": [
+                  "scene_001"
+                ]
+              }
+            ],
+            "rewrite_scope": [
+              "scene_001"
+            ],
+            "error": null
+          },
+          "repair_triggered": false,
+          "repair_count": 0
         },
         "after_script": {
           "schema_version": "1.0",
@@ -1485,7 +1641,7 @@
             "source_type": "novel",
             "language": "zh-CN",
             "adaptation_type": "short_drama",
-            "generated_at": "2026-06-06 23:13:07"
+            "generated_at": "2026-06-07 14:39:21"
           },
           "chapters": [
             {
@@ -1775,7 +1931,7 @@
               "source_type": "novel",
               "language": "zh-CN",
               "adaptation_type": "short_drama",
-              "generated_at": "2026-06-06 23:13:07"
+              "generated_at": "2026-06-07 14:39:21"
             },
             "chapters": [
               {
@@ -2054,7 +2210,76 @@
                 "建议人工检查人物口吻和场景节奏。"
               ]
             }
+          },
+          "ai_review": {
+            "score": 82,
+            "ai_draft_score": 82,
+            "scores": {
+              "fidelity": 88,
+              "performability": 78,
+              "character_dialogue_consistency": 76
+            },
+            "issues": [
+              {
+                "type": "character_dialogue_consistency",
+                "severity": "medium",
+                "scene_id": "scene_002",
+                "message": "部分对白仍偏直接说明，可继续增强人物口吻差异。",
+                "suggestion": "人工润色周岚与陈放的表达方式。",
+                "rewrite_scope": []
+              }
+            ],
+            "requires_rewrite": false,
+            "rewrite_scope": []
           }
+        },
+        "after_metrics": {
+          "chapter_coverage": 1.0,
+          "event_coverage": 1.0,
+          "dialogue_ratio": 0.4667,
+          "reference_consistency": 1.0,
+          "scene_completeness": 1.0,
+          "schema_valid": true,
+          "validator_ai_score": 82,
+          "ai_scores": {
+            "fidelity": 88,
+            "performability": 78,
+            "character_dialogue_consistency": 76
+          },
+          "severity_counts": {
+            "high": 0,
+            "medium": 1,
+            "low": 0
+          },
+          "ai_review": {
+            "score": 82,
+            "ai_draft_score": 82,
+            "scores": {
+              "fidelity": 88,
+              "performability": 78,
+              "character_dialogue_consistency": 76
+            },
+            "severity_counts": {
+              "high": 0,
+              "medium": 1,
+              "low": 0
+            },
+            "requires_rewrite": false,
+            "issues": [
+              {
+                "type": "character_dialogue_consistency",
+                "severity": "medium",
+                "scene_id": "scene_002",
+                "message": "部分对白仍偏直接说明，可继续增强人物口吻差异。",
+                "suggestion": "人工润色周岚与陈放的表达方式。",
+                "rewrite_scope": []
+              }
+            ],
+            "rewrite_scope": [],
+            "error": null
+          },
+          "repair_triggered": true,
+          "repair_count": 1
         }
       }
     ]

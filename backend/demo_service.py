@@ -11,7 +11,7 @@ def import_demo_project(project_store):
     project_id = package["project_id"]
     existing = project_store.get_project(project_id)
     if existing:
-        return existing
+        project_store.delete_project(project_id)
 
     project_store.create_project(
         project_id,

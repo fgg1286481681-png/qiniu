@@ -24,7 +24,7 @@ from agents.planner import (
     infer_characters,
 )
 from agents.reader import ReaderAgent, ReaderLLMProvider, chunk_paragraphs, parse_chapters
-from agents.validator import ValidatorAgent, validate_script
+from agents.validator import ValidatorAgent, normalize_ai_review, validate_script
 from agents.writer import build_rule_script, dump_script_yaml
 from demo_service import import_demo_project
 from llm_client import LLMClient
@@ -173,6 +173,68 @@ class RepairingWriter:
         }
 
 
+class HighIssueValidatorProvider:
+    model = "validator-test"
+
+    def __init__(self):
+        self.calls = 0
+
+    def review(self, script):
+        self.calls += 1
+        issues = []
+        if self.calls == 1:
+            issues = [
+                {
+                    "type": "performability",
+                    "severity": "high",
+                    "scene_id": script["scenes"][0]["id"],
+                    "message": "场景缺少可执行动作",
+                    "suggestion": "补充人物推动冲突的动作",
+                    "rewrite_scope": [script["scenes"][0]["id"]],
+                }
+            ]
+        return {
+            "review": normalize_ai_review(
+                {
+                    "scores": {
+                        "fidelity": 80,
+                        "performability": 60 if issues else 82,
+                        "character_dialogue_consistency": 76,
+                    },
+                    "issues": issues,
+                    "requires_rewrite": bool(issues),
+                    "rewrite_scope": [
+                        script["scenes"][0]["id"]
+                    ] if issues else [],
+                }
+            ),
+            "usage": {"total_tokens": 20},
+            "attempts": 1,
+        }
+
+
+class AiIssueRepairingWriter:
+    def __init__(self):
+        self.repair_calls = 0
+
+    def run(self, plan, title):
+        script = build_rule_script(plan, title)
+        return {
+            "script": script,
+            "yaml": dump_script_yaml(script),
+            "trace": {"agent": "Writer Agent", "stage": "writer", "status": "success"},
+        }
+
+    def repair(self, script, plan, validation, round_number):
+        self.repair_calls += 1
+        repaired = deepcopy(script)
+        return {
+            "script": repaired,
+            "yaml": dump_script_yaml(repaired),
+            "trace": {"agent": "Writer Agent", "stage": "repair", "status": "repaired"},
+        }
+
+
 class CoreTests(unittest.TestCase):
     def test_reader_chunks_long_text_and_merges_usage(self):
         paragraphs = [f"段落 {index} " + "内容" * 80 for index in range(6)]
@@ -243,6 +305,55 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(metrics["scene_completeness"], 1.0)
         self.assertTrue(metrics["repair_triggered"])
 
+    def test_ai_review_uses_three_mvp_dimensions(self):
+        review = normalize_ai_review(
+            {
+                "scores": {
+                    "fidelity": 90,
+                    "performability": 80,
+                    "character_dialogue_consistency": 70,
+                },
+                "issues": [
+                    {
+                        "type": "dialogue",
+                        "severity": "critical",
+                        "scene_id": "scene_001",
+                        "message": "人物关系与前文冲突",
+                        "suggested_fix": "恢复原人物关系",
+                    }
+                ],
+            }
+        )
+        self.assertEqual(review["ai_draft_score"], 82)
+        self.assertEqual(review["score"], 82)
+        self.assertEqual(review["issues"][0]["severity"], "high")
+        self.assertEqual(review["issues"][0]["suggestion"], "恢复原人物关系")
+        self.assertEqual(review["rewrite_scope"], ["scene_001"])
+        self.assertTrue(review["requires_rewrite"])
+
+    def test_dialogue_character_must_belong_to_scene(self):
+        _, script = valid_script()
+        other_character = deepcopy(script["characters"][0])
+        other_character["id"] = "char_999"
+        other_character["name"] = "旁观者"
+        script["characters"].append(other_character)
+        dialogue = next(
+            element
+            for element in script["scenes"][0]["elements"]
+            if element["type"] == "dialogue"
+        )
+        dialogue["character_id"] = "char_999"
+
+        validation = validate_script(script)
+
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                item["message"] == "对白人物未列入当前场景人物"
+                for item in validation["errors"]
+            )
+        )
+
     def test_rule_writer_uses_event_specific_dialogue(self):
         _, script = valid_script()
         dialogue = [
@@ -300,6 +411,22 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(writer.repair_calls, 2)
         self.assertEqual(result["final_status"], "completed")
         self.assertTrue(result["validation"]["valid"])
+
+    def test_orchestrator_records_mvp_repair_metrics(self):
+        writer = AiIssueRepairingWriter()
+        validator = ValidatorAgent(provider=HighIssueValidatorProvider())
+        result = Orchestrator(
+            writer=writer,
+            validator=validator,
+        ).generate(SOURCE, "AI 修复记录测试")
+
+        history = result["_artifacts"]["repair_history"]
+        self.assertEqual(result["repair_count"], 1)
+        self.assertEqual(result["final_status"], "completed")
+        self.assertEqual(history[0]["rewrite_scope"], ["scene_001"])
+        self.assertIn("场景缺少可执行动作", history[0]["reason"])
+        self.assertIn("before_metrics", history[0])
+        self.assertIn("after_metrics", history[0])
 
     def test_project_store_status_and_artifacts(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -47,6 +47,11 @@ class Orchestrator:
             progress("repair", 70 + repair_count * 8)
             before_script = writer_result["script"]
             before_validation = validator_result["validation"]
+            before_metrics = calculate_quality_metrics(
+                before_script,
+                before_validation,
+                repair_count - 1,
+            )
             writer_result = self.writer.repair(
                 before_script,
                 planner_result["plan"],
@@ -56,13 +61,24 @@ class Orchestrator:
             agent_trace.append(writer_result["trace"])
             validator_result = self.validator.run(writer_result["script"])
             agent_trace.append(validator_result["trace"])
+            after_metrics = calculate_quality_metrics(
+                writer_result["script"],
+                validator_result["validation"],
+                repair_count,
+            )
             repair_history.append(
                 {
                     "round": repair_count,
+                    "reason": repair_reason(before_validation),
+                    "rewrite_scope": (
+                        before_validation.get("ai_review") or {}
+                    ).get("rewrite_scope", []),
                     "before_script": before_script,
                     "before_validation": before_validation,
+                    "before_metrics": before_metrics,
                     "after_script": writer_result["script"],
                     "after_validation": validator_result["validation"],
+                    "after_metrics": after_metrics,
                 }
             )
 
@@ -107,6 +123,19 @@ def project_status(validation):
     if (validation.get("ai_review") or {}).get("requires_rewrite"):
         return "completed_with_warnings"
     return "completed"
+
+
+def repair_reason(validation):
+    if not validation.get("valid"):
+        return "Schema 或引用校验失败"
+    issues = (validation.get("ai_review") or {}).get("issues") or []
+    high_issues = [
+        issue.get("message")
+        for issue in issues
+        if issue.get("severity") in {"high", "critical"}
+        and issue.get("message")
+    ]
+    return "；".join(high_issues) or "Validator 判定需要局部修复"
 
 
 def generate_project(text, title="未命名小说", project_id=None, progress_callback=None):

@@ -42,12 +42,60 @@ def main():
     initial_script["scenes"][0]["heading"]["location_id"] = "loc_missing"
     initial_script["scenes"][0]["elements"] = initial_script["scenes"][0]["elements"][:2]
     initial_validation = validate_script(initial_script)
+    initial_validation["ai_review"] = {
+        "score": 66,
+        "ai_draft_score": 66,
+        "scores": {
+            "fidelity": 82,
+            "performability": 48,
+            "character_dialogue_consistency": 66,
+        },
+        "issues": [
+            {
+                "type": "performability",
+                "severity": "high",
+                "scene_id": "scene_001",
+                "message": "首场景元素不足，无法形成完整的动作与对白推进。",
+                "suggestion": "补充围绕重复订单冲突的可执行动作。",
+                "rewrite_scope": ["scene_001"],
+            }
+        ],
+        "requires_rewrite": True,
+        "rewrite_scope": ["scene_001"],
+    }
 
     repaired_script = repair_script_rules(initial_script, planner)
     final_validation = validate_script(repaired_script)
+    final_validation["ai_review"] = {
+        "score": 82,
+        "ai_draft_score": 82,
+        "scores": {
+            "fidelity": 88,
+            "performability": 78,
+            "character_dialogue_consistency": 76,
+        },
+        "issues": [
+            {
+                "type": "character_dialogue_consistency",
+                "severity": "medium",
+                "scene_id": "scene_002",
+                "message": "部分对白仍偏直接说明，可继续增强人物口吻差异。",
+                "suggestion": "人工润色周岚与陈放的表达方式。",
+                "rewrite_scope": [],
+            }
+        ],
+        "requires_rewrite": False,
+        "rewrite_scope": [],
+    }
+    initial_metrics = calculate_quality_metrics(
+        initial_script,
+        initial_validation,
+        repair_count=0,
+    )
     metrics = calculate_quality_metrics(repaired_script, final_validation, repair_count=1)
 
     package = {
+        "fixture_version": "2.1",
         "project_id": "00000000-0000-4000-8000-000000000001",
         "title": "停电前的最后一单",
         "source_filename": "原创离线演示小说.txt",
@@ -79,10 +127,14 @@ def main():
             "repair_history": [
                 {
                     "round": 1,
+                    "reason": "Schema 校验失败，且首场景缺少完整动作推进",
+                    "rewrite_scope": ["scene_001"],
                     "before_script": initial_script,
                     "before_validation": initial_validation,
+                    "before_metrics": initial_metrics,
                     "after_script": repaired_script,
                     "after_validation": final_validation,
+                    "after_metrics": metrics,
                 }
             ],
         },
