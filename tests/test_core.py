@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -26,6 +27,7 @@ from agents.reader import ReaderAgent, ReaderLLMProvider, chunk_paragraphs, pars
 from agents.validator import ValidatorAgent, validate_script
 from agents.writer import build_rule_script, dump_script_yaml
 from demo_service import import_demo_project
+from llm_client import LLMClient
 from orchestrator import Orchestrator
 from project_store import ProjectStore
 from quality_metrics import calculate_quality_metrics
@@ -39,6 +41,28 @@ SOURCE = """第一章 开始
 
 第三章 决定
 他们最终决定将旧信交给档案馆保存。"""
+
+
+class LLMClientTests(unittest.TestCase):
+    def test_probe_accepts_plain_text_response(self):
+        client = LLMClient(
+            api_base_url="https://example.test/v1",
+            api_key="test-key",
+        )
+        with patch.object(
+            client,
+            "_post_chat_completions",
+            return_value={
+                "content": "OK",
+                "model": "test-model",
+                "usage": {"total_tokens": 3},
+            },
+        ) as post:
+            result = client.probe(model="test-model")
+
+        self.assertEqual(result["content"], "OK")
+        self.assertEqual(result["model"], "test-model")
+        self.assertEqual(post.call_count, 1)
 
 
 def valid_script():

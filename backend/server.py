@@ -1,6 +1,6 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import json
 from time import perf_counter
 import uuid
@@ -22,21 +22,19 @@ PORT = 8000
 PROJECT_STORE = ProjectStore()
 PROJECT_STORE.interrupt_processing_projects()
 TASK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="novel2script")
-AI_HEALTH_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-health")
 
 
 class GenerationCancelled(Exception):
     pass
 
 
-def check_ai_agent(agent_name, model):
+def check_ai_model(model):
     configured = bool(
         get_env("LLM_API_BASE_URL", "")
         and get_env("LLM_API_KEY", "")
         and model
     )
     result = {
-        "agent": agent_name,
         "model": model or None,
         "configured": configured,
         "reachable": False,
@@ -51,17 +49,11 @@ def check_ai_agent(agent_name, model):
     try:
         client = LLMClient(
             timeout_seconds=int(get_env("LLM_HEALTH_TIMEOUT_SECONDS", "20")),
-            max_retries=0,
+            max_retries=1,
         )
-        client.chat_json(
-            model=model,
-            system_prompt="你是连通性检测助手，只输出严格 JSON。",
-            user_prompt='请只输出 {"ok": true}',
-            temperature=0,
-            top_p=1,
-            max_tokens=30,
-        )
+        response = client.probe(model=model)
         result["reachable"] = True
+        result["resolved_model"] = response["model"]
     except Exception as exc:
         result["error"] = str(exc)[:300]
     result["duration_ms"] = round((perf_counter() - started) * 1000)
@@ -75,14 +67,22 @@ def check_all_ai_agents():
         "Writer Agent": get_env("WRITER_MODEL", ""),
         "Validator Agent": get_env("VALIDATOR_MODEL", ""),
     }
-    futures = {
-        AI_HEALTH_EXECUTOR.submit(check_ai_agent, agent, model): agent
+    model_results = {}
+    for model in dict.fromkeys(models.values()):
+        model_results[model] = check_ai_model(model)
+
+    results = [
+        {
+            **model_results[model],
+            "agent": agent,
+            "shared_check": sum(
+                configured_model == model
+                for configured_model in models.values()
+            )
+            > 1,
+        }
         for agent, model in models.items()
-    }
-    results = []
-    for future in as_completed(futures):
-        results.append(future.result())
-    results.sort(key=lambda item: list(models).index(item["agent"]))
+    ]
     return {
         "ready": all(item["reachable"] for item in results),
         "agents": results,

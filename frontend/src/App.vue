@@ -80,7 +80,7 @@
               <small>{{ item.model || "未配置模型" }}</small>
             </div>
             <span :class="{ pass: item.reachable, danger: !item.reachable }">
-              {{ item.reachable ? `${formatDuration(item.duration_ms)} · 可用` : item.configured ? "连接失败" : "未配置" }}
+              {{ item.reachable ? `${formatDuration(item.duration_ms)} · 可用${item.shared_check ? "（共享模型检测）" : ""}` : item.configured ? "连接失败" : "未配置" }}
             </span>
             <p v-if="item.error">{{ item.error }}</p>
           </div>

@@ -50,6 +50,37 @@ class LLMClient:
     def enabled(self):
         return bool(self.api_base_url and self.api_key)
 
+    def probe(self, *, model):
+        """Check authentication and model reachability without parsing model text."""
+        if not self.enabled:
+            raise RuntimeError("LLM_API_BASE_URL 或 LLM_API_KEY 未配置")
+        if not model:
+            raise RuntimeError("模型名称未配置")
+
+        response = self._post_chat_completions(
+            {
+                "model": model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "回复 OK，用于服务连通性检测。",
+                    }
+                ],
+                "temperature": 0,
+                "top_p": 1,
+                "max_tokens": 128,
+                "stream": False,
+            }
+        )
+        content = response.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("模型已响应，但返回内容为空")
+        return {
+            "content": content.strip(),
+            "usage": response.get("usage"),
+            "model": response.get("model") or model,
+        }
+
     def chat_json(
         self,
         *,

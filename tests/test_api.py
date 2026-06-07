@@ -8,6 +8,7 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -107,6 +108,37 @@ class ApiTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual(len(result["agents"]), 4)
         self.assertTrue(all(not item["configured"] for item in result["agents"]))
+
+    def test_ai_health_checks_shared_model_only_once(self):
+        config = {
+            "LLM_API_BASE_URL": "https://example.test/v1",
+            "LLM_API_KEY": "test-key",
+            "READER_MODEL": "shared-model",
+            "PLANNER_MODEL": "shared-model",
+            "WRITER_MODEL": "shared-model",
+            "VALIDATOR_MODEL": "shared-model",
+        }
+
+        with patch.object(
+            server,
+            "get_env",
+            side_effect=lambda name, default="": config.get(name, default),
+        ), patch.object(
+            server,
+            "check_ai_model",
+            return_value={
+                "model": "shared-model",
+                "configured": True,
+                "reachable": True,
+                "duration_ms": 10,
+                "error": None,
+            },
+        ) as check:
+            result = server.check_all_ai_agents()
+
+        self.assertTrue(result["ready"])
+        self.assertEqual(check.call_count, 1)
+        self.assertTrue(all(item["shared_check"] for item in result["agents"]))
 
     def test_cancel_endpoint_marks_request(self):
         project_id = "00000000-0000-4000-8000-000000000012"
