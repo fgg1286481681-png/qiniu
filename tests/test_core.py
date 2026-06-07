@@ -236,6 +236,48 @@ class AiIssueRepairingWriter:
 
 
 class CoreTests(unittest.TestCase):
+    def test_parse_chapters_supports_common_heading_variants(self):
+        text = """【第一章】雨夜
+林夏在雨里找到钥匙。
+
+# 第二章 后台
+沈砚打开旧剧场的门。
+
+Chapter 3 Tape
+录音带播放出真相。"""
+        result = parse_chapters(text)
+        self.assertIn(result["mode"], {"heading", "soft_heading"})
+        self.assertEqual(len(result["chapters"]), 3)
+        self.assertGreaterEqual(result["confidence"], 0.55)
+        self.assertIn("雨夜", result["chapters"][0]["title"])
+
+    def test_parse_chapters_supports_numbered_soft_headings(self):
+        text = """01 雨夜
+第一段剧情。
+
+02 后台
+第二段剧情。
+
+03 录音
+第三段剧情。"""
+        result = parse_chapters(text)
+        self.assertEqual(result["mode"], "soft_heading")
+        self.assertEqual(len(result["chapters"]), 3)
+
+    def test_parse_chapters_avoids_inline_false_positive(self):
+        text = """林夏翻到书里的第一章，发现那只是教材目录，不是故事标题。
+她继续往下读，雨声越来越急。
+
+沈砚把纸箱搬到门口，里面有票根和录音带。
+两人决定去旧剧场寻找后台入口。
+
+录音带播放出周予的声音，真相终于被确认。
+天亮时，旧书店门口亮起灯。"""
+        result = parse_chapters(text)
+        self.assertEqual(result["mode"], "smart_fallback")
+        self.assertGreaterEqual(len(result["chapters"]), 3)
+        self.assertLessEqual(result["confidence"], 0.45)
+
     def test_reader_chunks_long_text_and_merges_usage(self):
         paragraphs = [f"段落 {index} " + "内容" * 80 for index in range(6)]
         client = ReaderChunkClient()

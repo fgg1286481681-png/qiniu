@@ -237,6 +237,10 @@ class AppHandler(BaseHTTPRequestHandler):
                         ],
                         "parse_mode": parse_result["mode"],
                         "parse_warning": parse_result["warning"],
+                        "confidence": parse_result.get("confidence"),
+                        "warnings": parse_result.get("warnings", []),
+                        "candidate_count": len(parse_result.get("candidates", [])),
+                        "candidates": parse_result.get("candidates", []),
                     },
                 )
                 return

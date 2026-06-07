@@ -264,6 +264,22 @@ textarea {
   font-style: normal;
 }
 
+.parse-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 8px 0;
+  color: #6d7b88;
+  font-size: 13px;
+}
+
+.parse-warnings {
+  margin: 8px 0 10px;
+  padding-left: 18px;
+  color: #9a5b00;
+  font-size: 13px;
+}
+
 .generate-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
