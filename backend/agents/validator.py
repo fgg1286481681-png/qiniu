@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
 
+from cancellation import is_cancelled_exception
 from llm_client import LLMClient, get_env
 from trace_utils import TraceTimer
 
@@ -41,6 +42,8 @@ class ValidatorAgent:
                 validation["ai_review"] = ai_review
                 source = "llm"
             except Exception as exc:
+                if is_cancelled_exception(exc):
+                    raise
                 fallback_reason = str(exc)
                 validation["ai_review"] = {
                     "score": None,

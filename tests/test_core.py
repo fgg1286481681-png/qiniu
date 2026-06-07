@@ -2,8 +2,11 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +29,12 @@ from agents.planner import (
 from agents.reader import ReaderAgent, ReaderLLMProvider, chunk_paragraphs, parse_chapters
 from agents.validator import ValidatorAgent, normalize_ai_review, validate_script
 from agents.writer import build_rule_script, dump_script_yaml
+from cancellation import (
+    CancelledError,
+    CancellationToken,
+    reset_current_token,
+    set_current_token,
+)
 from demo_service import import_demo_project
 from llm_client import LLMClient
 from orchestrator import Orchestrator
@@ -63,6 +72,73 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(result["content"], "OK")
         self.assertEqual(result["model"], "test-model")
         self.assertEqual(post.call_count, 1)
+
+    def test_chat_json_can_cancel_inflight_request(self):
+        request_started = threading.Event()
+
+        class SlowChatHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                request_started.set()
+                time.sleep(5)
+                body = json.dumps(
+                    {
+                        "choices": [{"message": {"content": '{"ok": true}'}}],
+                        "model": "slow-model",
+                    }
+                ).encode("utf-8")
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError:
+                    pass
+
+            def log_message(self, format, *args):
+                return
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), SlowChatHandler)
+        server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        server_thread.start()
+        token = CancellationToken("test-project")
+        errors = []
+
+        def call_model():
+            context_token = set_current_token(token)
+            try:
+                client = LLMClient(
+                    api_base_url=f"http://127.0.0.1:{httpd.server_address[1]}/v1",
+                    api_key="test-key",
+                    timeout_seconds=10,
+                    max_retries=0,
+                )
+                client.chat_json(
+                    model="slow-model",
+                    system_prompt="Return JSON.",
+                    user_prompt="Return JSON.",
+                )
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                reset_current_token(context_token)
+
+        worker = threading.Thread(target=call_model)
+        worker.start()
+        self.assertTrue(request_started.wait(2))
+        started = time.monotonic()
+        token.cancel()
+        worker.join(timeout=2)
+
+        httpd.shutdown()
+        httpd.server_close()
+        server_thread.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertTrue(errors)
+        self.assertIsInstance(errors[0], CancelledError)
 
 
 def valid_script():

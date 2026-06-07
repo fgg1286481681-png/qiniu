@@ -1,5 +1,6 @@
 import re
 
+from cancellation import is_cancelled_exception
 from llm_client import LLMClient, get_env
 from trace_utils import TraceTimer
 
@@ -39,6 +40,8 @@ class ReaderAgent:
                 usage = provider_result["usage"]
                 source = "llm"
         except Exception as exc:
+            if is_cancelled_exception(exc):
+                raise
             fallback_reason = str(exc)
             warnings = parse_result.setdefault("warnings", [])
             warnings.append(f"Reader AI 辅助识别失败，已保留本地识别结果：{fallback_reason}")
