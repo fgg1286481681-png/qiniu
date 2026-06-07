@@ -1,6 +1,7 @@
 import json
 import re
 
+from cancellation import is_cancelled_exception
 from llm_client import LLMClient, get_env
 from trace_utils import TraceTimer
 
@@ -38,6 +39,8 @@ class PlannerAgent:
             else:
                 plan = build_rule_plan(chapters)
         except Exception as exc:
+            if is_cancelled_exception(exc):
+                raise
             plan = build_rule_plan(chapters)
             fallback_reason = str(exc)
             plan["warning"] = f"Planner AI 调用失败，已回退规则规划：{fallback_reason}"

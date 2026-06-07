@@ -9,6 +9,15 @@ from jsonschema.exceptions import ValidationError
 
 from agents.reader import parse_chapters
 from agents.validator import parse_yaml_script, validate_script
+from cancellation import (
+    CancelledError,
+    CancellationToken,
+    cancel_project,
+    register_project_token,
+    reset_current_token,
+    set_current_token,
+    unregister_project_token,
+)
 from demo_service import import_demo_project
 from llm_client import LLMClient, get_env
 from orchestrator import generate_project
@@ -22,10 +31,6 @@ PORT = 8000
 PROJECT_STORE = ProjectStore()
 PROJECT_STORE.interrupt_processing_projects()
 TASK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="novel2script")
-
-
-class GenerationCancelled(Exception):
-    pass
 
 
 def check_ai_model(model):
@@ -122,8 +127,14 @@ def public_result(result):
 
 
 def run_generation(project_id, source_text, title):
+    cancellation_token = CancellationToken(project_id)
+    register_project_token(cancellation_token)
+    context_token = set_current_token(cancellation_token)
+
     def ensure_not_cancelled():
         if PROJECT_STORE.is_cancel_requested(project_id):
+            cancellation_token.cancel()
+            cancellation_token.check()
             raise GenerationCancelled("用户取消了生成任务")
 
     def report_progress(step, progress, agent_trace):
@@ -167,12 +178,15 @@ def run_generation(project_id, source_text, title):
         artifacts = result["_artifacts"]
         PROJECT_STORE.complete_project(project_id, result, artifacts)
         return public_result(result)
-    except GenerationCancelled:
+    except CancelledError:
         PROJECT_STORE.mark_cancelled(project_id)
         return None
     except Exception as exc:
         PROJECT_STORE.fail_project(project_id, exc)
         raise
+    finally:
+        reset_current_token(context_token)
+        unregister_project_token(project_id, cancellation_token)
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -301,6 +315,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 elif result is False:
                     json_response(self, 409, {"error": "项目当前状态无法取消"})
                 else:
+                    cancel_project(cancel_project_id)
                     json_response(
                         self,
                         202,

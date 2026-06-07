@@ -4,6 +4,7 @@ import time
 
 import yaml
 
+from cancellation import is_cancelled_exception
 from llm_client import LLMClient, get_env
 from trace_utils import TraceTimer
 
@@ -36,6 +37,8 @@ class WriterAgent:
             else:
                 script = build_rule_script(plan, title)
         except Exception as exc:
+            if is_cancelled_exception(exc):
+                raise
             fallback_reason = str(exc)
             script = build_rule_script(plan, title)
             script["adaptation_notes"]["next_steps"].append(
@@ -76,6 +79,8 @@ class WriterAgent:
                 usage = provider_result["usage"]
                 source = "llm"
         except Exception as exc:
+            if is_cancelled_exception(exc):
+                raise
             fallback_reason = str(exc)
 
         if repaired is None:
@@ -156,6 +161,8 @@ class WriterLLMProvider:
                 if response["usage"]:
                     usage_items.append(response["usage"])
             except Exception as exc:
+                if is_cancelled_exception(exc):
+                    raise
                 batch_fallback_count += 1
                 scenes.extend(
                     build_scenes(

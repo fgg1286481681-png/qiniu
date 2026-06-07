@@ -6,6 +6,8 @@
 
 项目后端采用 Orchestrator + Reader/Planner/Writer/Validator Agent 工作链，支持真实模型调用、规则降级、自动修复和质量评估。
 
+视频链接：【Novel2Script使用介绍-哔哩哔哩】 https://b23.tv/1GLHSr0
+
 ## 评审版 Demo
 
 技术栈：
