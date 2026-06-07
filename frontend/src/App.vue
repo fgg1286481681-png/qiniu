@@ -41,7 +41,25 @@
             <strong :class="{ danger: chapterCount > 0 && chapterCount < 3 }">{{ chapterCount }} 章</strong>
           </div>
           <p v-if="parseWarning" class="warning">{{ parseWarning }}</p>
-          <p v-else-if="parseMode" class="muted">解析模式：{{ parseMode }}</p>
+          <p v-else-if="parseMode" class="muted">解析模式：{{ parseModeLabel }}</p>
+          <div v-if="parseMode" class="parse-meta">
+            <span :class="{ pass: parseConfidence >= 0.75, warning: parseConfidence > 0 && parseConfidence < 0.75 }">
+              置信度：{{ parseConfidenceLabel }}
+            </span>
+            <span v-if="candidateCount">候选标题：{{ candidateCount }}</span>
+          </div>
+          <ul v-if="parseWarnings.length" class="parse-warnings">
+            <li v-for="item in parseWarnings" :key="item">{{ item }}</li>
+          </ul>
+          <details v-if="parseCandidates.length" class="candidate-preview">
+            <summary>查看候选标题</summary>
+            <ul>
+              <li v-for="item in parseCandidates" :key="`${item.line}-${item.title}`" :class="{ excluded: item.excluded }">
+                <span>第 {{ item.line }} 行：{{ item.title }}</span>
+                <em>{{ item.excluded ? `已排除：${item.reason || '低置信度'}` : `保留 · ${candidateKindLabel(item.kind)} · ${candidateScoreLabel(item.score)}` }}</em>
+              </li>
+            </ul>
+          </details>
           <ul v-if="chapters.length">
             <li v-for="chapter in chapters" :key="chapter.chapter_id">
               <span>{{ chapter.title }}</span>
@@ -345,6 +363,10 @@ const repairHistory = ref([]);
 const tab = ref("characters");
 const parseMode = ref("");
 const parseWarning = ref("");
+const parseWarnings = ref([]);
+const parseConfidence = ref(0);
+const candidateCount = ref(0);
+const parseCandidates = ref([]);
 const agentTrace = ref([]);
 const progress = ref(0);
 const currentProjectId = ref("");
@@ -396,6 +418,20 @@ const validationLabel = computed(() => {
   if (validation.value.valid === false) return "校验失败";
   return "待校验";
 });
+const parseModeLabel = computed(() => ({
+  heading: "标准章节标题",
+  soft_heading: "扩展章节标题",
+  smart_fallback: "智能切分",
+  fallback: "自动切分",
+  llm: "AI 章节识别",
+  llm_chunked: "AI 分块章节识别",
+  empty: "空文本",
+}[parseMode.value] || parseMode.value));
+const parseConfidenceLabel = computed(() => (
+  typeof parseConfidence.value === "number" && parseConfidence.value > 0
+    ? `${Math.round(parseConfidence.value * 100)}%`
+    : "--"
+));
 const qualityCards = computed(() => {
   const metrics = qualityMetrics.value || {};
   return [
@@ -639,6 +675,27 @@ async function deleteProject(project) {
 function syncParseInfo(data) {
   parseMode.value = data.parse_mode || "";
   parseWarning.value = data.parse_warning || "";
+  parseWarnings.value = data.warnings || [];
+  parseConfidence.value = typeof data.confidence === "number" ? data.confidence : 0;
+  candidateCount.value = data.candidate_count || data.candidates?.length || 0;
+  parseCandidates.value = data.candidates || [];
+}
+
+function candidateKindLabel(kind) {
+  return {
+    standard: "标准标题",
+    chapter_word: "章节字样",
+    english: "英文标题",
+    numbered: "数字小节",
+    special: "特殊章节",
+    soft_special: "扩展章节",
+    section: "层级标题",
+    numeric_noise: "数字噪声",
+  }[kind] || kind || "候选";
+}
+
+function candidateScoreLabel(score) {
+  return typeof score === "number" ? `${Math.round(score * 100)}%` : "--";
 }
 
 async function analyzeText() {
@@ -839,7 +896,13 @@ function applyProject(data) {
   qualityMetrics.value = data.quality_metrics || {};
   repairHistory.value = data.repair_history || [];
   agentTrace.value = data.agent_trace || [];
-  syncParseInfo(data);
+  syncParseInfo({
+    ...data,
+    confidence: data.confidence ?? data.reader?.confidence,
+    warnings: data.warnings ?? data.reader?.warnings,
+    candidates: data.candidates ?? data.reader?.candidates,
+    candidate_count: data.candidate_count ?? data.reader?.candidates?.length,
+  });
   chapters.value = (data.script?.chapters || []).map((item) => ({
     chapter_id: item.id,
     title: item.title,

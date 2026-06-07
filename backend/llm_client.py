@@ -92,6 +92,7 @@ class LLMClient:
         max_tokens=8000,
         presence_penalty=None,
         frequency_penalty=None,
+        response_format_json=False,
     ):
         if not self.enabled:
             raise RuntimeError("LLM_API_BASE_URL 或 LLM_API_KEY 未配置")
@@ -113,6 +114,8 @@ class LLMClient:
             payload["presence_penalty"] = presence_penalty
         if frequency_penalty is not None:
             payload["frequency_penalty"] = frequency_penalty
+        if response_format_json:
+            payload["response_format"] = {"type": "json_object"}
 
         last_error = None
         for attempt in range(self.max_retries + 1):

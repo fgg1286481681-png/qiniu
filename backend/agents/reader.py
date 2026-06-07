@@ -5,7 +5,7 @@ from trace_utils import TraceTimer
 
 
 class ReaderAgent:
-    """Reader Agent: AI first, rule-based parser fallback."""
+    """Reader Agent: local chapter detection first, LLM only as low-confidence assist."""
 
     name = "Reader Agent"
 
@@ -22,19 +22,27 @@ class ReaderAgent:
         attempts = 0
         usage = None
         fallback_reason = None
+        parse_result = parse_chapters(text)
+        source = "rule"
         try:
-            if self.provider:
+            should_try_llm = (
+                self.provider
+                and (
+                    parse_result.get("confidence", 0) < 0.45
+                    or len(parse_result.get("chapters", [])) < 3
+                )
+            )
+            if should_try_llm:
                 provider_result = self.provider.parse(text)
                 parse_result = provider_result["parse_result"]
                 attempts = provider_result["attempts"]
                 usage = provider_result["usage"]
                 source = "llm"
-            else:
-                parse_result = parse_chapters(text)
         except Exception as exc:
-            parse_result = parse_chapters(text)
             fallback_reason = str(exc)
-            parse_result["warning"] = f"Reader AI 调用失败，已回退规则解析：{fallback_reason}"
+            warnings = parse_result.setdefault("warnings", [])
+            warnings.append(f"Reader AI 辅助识别失败，已保留本地识别结果：{fallback_reason}")
+            parse_result["warning"] = "；".join(warnings) if warnings else parse_result.get("warning")
 
         return {
             "parse_result": parse_result,
@@ -110,6 +118,9 @@ class ReaderLLMProvider:
             "mode": "llm_chunked" if len(paragraph_chunks) > 1 else "llm",
             "warning": None,
             "chunk_count": len(paragraph_chunks),
+            "confidence": 0.9,
+            "candidates": [],
+            "warnings": [],
             "global_summary": merge_chapter_summaries(chapters),
         }
         return {
@@ -255,6 +266,9 @@ def normalize_llm_parse_result(result, paragraphs):
         "mode": result.get("mode") or "llm",
         "warning": result.get("warning"),
         "chunk_count": 1,
+        "confidence": 0.9,
+        "candidates": [],
+        "warnings": [],
         "global_summary": merge_chapter_summaries(chapters),
     }
 
@@ -278,94 +292,495 @@ def merge_usage(items):
     return merged or None
 
 
-def parse_inline_chapter_rest(rest):
-    rest = rest.strip()
+CHINESE_NUMBER_MAP = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+SPECIAL_CHAPTER_TITLES = {"序章", "楔子", "引子", "前言", "尾声", "后记"}
+SOFT_SPECIAL_TITLES = {"番外"}
+TERMINAL_PUNCTUATION = "。！？；?!;"
+SECTION_TITLE_PATTERN = re.compile(
+    r"^(?:第\s*[一二两三四五六七八九十百千万零〇\d]+\s*[部卷篇集]|[上下中前后终][部卷篇]|卷\s*[一二两三四五六七八九十百千万零〇\d]+)(?:\s+\S.*)?$"
+)
+
+
+def chinese_number_to_int(value):
+    value = re.sub(r"\s+", "", str(value or ""))
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+    if value in CHINESE_NUMBER_MAP:
+        return CHINESE_NUMBER_MAP[value]
+    if "十" in value:
+        left, _, right = value.partition("十")
+        tens = CHINESE_NUMBER_MAP.get(left, 1) if left else 1
+        ones = CHINESE_NUMBER_MAP.get(right, 0) if right else 0
+        return tens * 10 + ones
+    total = 0
+    for char in value:
+        if char not in CHINESE_NUMBER_MAP:
+            return None
+        total = total * 10 + CHINESE_NUMBER_MAP[char]
+    return total
+
+
+def strip_heading_marks(line):
+    text = re.sub(r"^\s*#{1,6}\s*", "", line.strip())
+    text = re.sub(r"^[【\[\(（《<]\s*", "", text)
+    text = re.sub(r"^\s*([^\]】）》>]+)[】\]\)）》>]\s*", r"\1 ", text)
+    text = re.sub(r"\s*[】\]\)）》>]\s*$", "", text)
+    return text.strip(" \t　")
+
+
+def split_inline_body(rest):
+    rest = rest.strip(" \t　:-—")
     if not rest:
         return "", ""
-
-    spaced = rest.split(maxsplit=1)
-    if len(spaced) == 2:
-        return spaced[0], spaced[1].strip()
-
-    punctuation = re.search(r"[。！？!?]", rest)
-    if punctuation and punctuation.start() <= 24:
+    punctuation = re.search(r"[。！？；?!;]", rest)
+    if punctuation and punctuation.start() <= 30:
         return rest[: punctuation.start()].strip(), rest[punctuation.start() + 1 :].strip()
-
     return rest, ""
+
+
+def score_candidate(line, kind, number, previous_blank, next_blank):
+    score = 0.0
+    if kind in {"standard", "chapter_word", "english"}:
+        score += 0.62
+    elif kind == "numbered":
+        score += 0.42
+    else:
+        score += 0.5
+    if number is not None:
+        score += 0.12
+    if len(line) <= 28:
+        score += 0.14
+    elif len(line) <= 45:
+        score += 0.05
+    else:
+        score -= 0.35
+    if previous_blank:
+        score += 0.06
+    if next_blank:
+        score += 0.04
+    if any(mark in line for mark in TERMINAL_PUNCTUATION):
+        score -= 0.28
+    if len(line) > 70:
+        score -= 0.35
+    return max(0.0, min(score, 1.0))
+
+
+def looks_like_numeric_noise(line):
+    text = line.strip()
+    starts_numeric = bool(re.match(r"^\d", text))
+    if ("%" in text or "％" in text) and starts_numeric:
+        return "疑似百分比或统计行"
+    if re.match(r"^\d+(?:\.\d+){1,3}$", text):
+        return "疑似小数或日期"
+    if re.match(r"^\d{3,4}[.．/-]\d{1,2}(?:[.．/-]\d{1,2})?(?:\D.*)?$", text):
+        return "疑似日期"
+    if re.match(r"^\d+[.．]\d+", text):
+        return "疑似小数编号"
+    return None
+
+
+def build_rejected_candidate(line, line_index, offset, reason):
+    return {
+        "line_index": line_index,
+        "offset": offset,
+        "title": strip_heading_marks(line) or line.strip(),
+        "number": None,
+        "kind": "numeric_noise",
+        "score": 0.0,
+        "inline_body": "",
+        "excluded": True,
+        "reason": reason,
+    }
+
+
+def looks_like_section_heading(line):
+    stripped = strip_heading_marks(line)
+    if not stripped or len(stripped) > 28:
+        return False
+    if any(mark in stripped for mark in TERMINAL_PUNCTUATION):
+        return False
+    if SECTION_TITLE_PATTERN.match(stripped):
+        return True
+    if re.match(r"^[一二两三四五六七八九十百千万零〇\d]{1,4}[部卷篇集]\s*\S*$", stripped):
+        return True
+    return False
+
+
+def build_candidate(line, line_index, offset, previous_blank, next_blank):
+    stripped = strip_heading_marks(line)
+    if not stripped:
+        return None
+    noise_reason = looks_like_numeric_noise(stripped)
+    if noise_reason:
+        return build_rejected_candidate(line, line_index, offset, noise_reason)
+
+    patterns = [
+        (
+            "standard",
+            re.compile(
+                r"^(?:第\s*(?P<number>[一二两三四五六七八九十百千万零〇\d]+)\s*[章节回幕卷])(?P<rest>.*)$",
+                re.I,
+            ),
+        ),
+        (
+            "chapter_word",
+            re.compile(r"^(?:章节|章|节)\s*(?P<number>[一二两三四五六七八九十百千万零〇\d]+)(?P<rest>.*)$", re.I),
+        ),
+        (
+            "english",
+            re.compile(r"^(?:chapter|chap\.?)\s*(?P<number>\d+|one|two|three|four|five|six|seven|eight|nine|ten)(?P<rest>.*)$", re.I),
+        ),
+        (
+            "numbered",
+            re.compile(r"^(?P<number>\d{1,4}|[一二两三四五六七八九十]{1,3})(?:[、.．\)]|\s+)\s*(?P<rest>\S.*)?$"),
+        ),
+    ]
+
+    kind = None
+    number = None
+    rest = ""
+    for candidate_kind, pattern in patterns:
+        match = pattern.match(stripped)
+        if not match:
+            continue
+        kind = candidate_kind
+        raw_number = match.group("number")
+        english_numbers = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+        }
+        number = english_numbers.get(str(raw_number).lower(), chinese_number_to_int(raw_number))
+        rest = match.groupdict().get("rest") or ""
+        if kind == "numbered":
+            if number is not None and number > 300:
+                return build_rejected_candidate(line, line_index, offset, "疑似年份或统计编号")
+            if rest and len(rest.strip()) > 48:
+                return build_rejected_candidate(line, line_index, offset, "数字编号后的标题过长，疑似正文或统计句")
+        break
+
+    special = stripped in SPECIAL_CHAPTER_TITLES or any(
+        stripped.startswith(f"{title} ") for title in SPECIAL_CHAPTER_TITLES
+    )
+    soft_special = any(stripped.startswith(title) for title in SOFT_SPECIAL_TITLES)
+    if kind is None and (special or soft_special):
+        kind = "special" if special else "soft_special"
+    if kind is None:
+        return None
+
+    title_tail, inline_body = split_inline_body(rest)
+    title_prefix = stripped[: len(stripped) - len(rest)] if rest else stripped
+    title = stripped if kind in {"special", "soft_special"} else re.sub(r"\s+", " ", f"{title_prefix}{title_tail}").strip()
+    score = score_candidate(stripped, kind, number, previous_blank, next_blank)
+    return {
+        "line_index": line_index,
+        "offset": offset,
+        "title": title or stripped,
+        "number": number,
+        "kind": kind,
+        "score": score,
+        "inline_body": inline_body,
+        "excluded": False,
+        "reason": None,
+    }
+
+
+def detect_chapter_candidates(text):
+    lines = text.splitlines(keepends=True)
+    plain_lines = [line.rstrip("\r\n") for line in lines]
+    candidates = []
+    sections = []
+    offset = 0
+    for index, raw_line in enumerate(lines):
+        line = raw_line.rstrip("\r\n")
+        previous_blank = index == 0 or not plain_lines[index - 1].strip()
+        next_blank = index + 1 >= len(plain_lines) or not plain_lines[index + 1].strip()
+        candidate = build_candidate(line, index, offset, previous_blank, next_blank)
+        if candidate:
+            candidates.append(candidate)
+        elif previous_blank and next_blank and looks_like_section_heading(line):
+            sections.append(
+                {
+                    "line_index": index,
+                    "offset": offset,
+                    "title": strip_heading_marks(line),
+                    "kind": "section",
+                    "score": 0.7,
+                    "excluded": True,
+                    "reason": "识别为部/卷/篇层级标题",
+                }
+            )
+        offset += len(raw_line)
+    sections.extend(infer_plain_sections(plain_lines, candidates))
+    attach_section_context(candidates, sections)
+    return sorted([*candidates, *sections], key=lambda item: item["offset"])
+
+
+def infer_plain_sections(lines, candidates):
+    numbered_lines = {
+        item["line_index"]
+        for item in candidates
+        if not item.get("excluded") and item.get("kind") == "numbered" and item.get("number") == 1
+    }
+    sections = []
+    offset = 0
+    line_offsets = []
+    for line in lines:
+        line_offsets.append(offset)
+        offset += len(line) + 1
+
+    for index, line in enumerate(lines):
+        stripped = strip_heading_marks(line)
+        previous_blank = index == 0 or not lines[index - 1].strip()
+        next_blank = index + 1 >= len(lines) or not lines[index + 1].strip()
+        if not (previous_blank and next_blank and stripped):
+            continue
+        if len(stripped) > 18 or any(mark in stripped for mark in TERMINAL_PUNCTUATION):
+            continue
+        if build_candidate(line, index, line_offsets[index], previous_blank, next_blank):
+            continue
+        lookahead = range(index + 1, min(len(lines), index + 8))
+        if any(line_number in numbered_lines for line_number in lookahead):
+            sections.append(
+                {
+                    "line_index": index,
+                    "offset": line_offsets[index],
+                    "title": stripped,
+                    "kind": "section",
+                    "score": 0.62,
+                    "excluded": True,
+                    "reason": "短标题后出现重新编号小节，识别为层级标题",
+                }
+            )
+    return sections
+
+
+def attach_section_context(candidates, sections):
+    active_section = None
+    section_items = sorted(sections, key=lambda item: item["offset"])
+    section_index = 0
+    for candidate in sorted(candidates, key=lambda item: item["offset"]):
+        while section_index < len(section_items) and section_items[section_index]["offset"] < candidate["offset"]:
+            active_section = section_items[section_index]["title"]
+            section_index += 1
+        if active_section and not candidate.get("excluded"):
+            candidate["section"] = active_section
+
+
+def select_chapter_boundaries(candidates, text_length):
+    if not candidates:
+        return [], 0.0, []
+
+    warnings = []
+    selected = [item for item in candidates if not item.get("excluded") and item["score"] >= 0.55]
+    if len(selected) < 3:
+        selected = [item for item in candidates if not item.get("excluded") and item["score"] >= 0.45]
+    selected.sort(key=lambda item: item["offset"])
+
+    filtered = []
+    previous_number = None
+    previous_section = None
+    for candidate in selected:
+        if filtered and candidate["offset"] - filtered[-1]["offset"] < 5:
+            if candidate["score"] > filtered[-1]["score"]:
+                filtered[-1] = candidate
+            continue
+        current_section = candidate.get("section")
+        if current_section != previous_section:
+            previous_number = None
+            previous_section = current_section
+        if previous_number is not None and candidate["number"] is not None:
+            if candidate["number"] < previous_number:
+                candidate = {**candidate, "score": max(0, candidate["score"] - 0.2)}
+                warnings.append("章节编号出现回退，已降低相关标题置信度。")
+            elif candidate["number"] > previous_number + 2:
+                candidate = {**candidate, "score": max(0, candidate["score"] - 0.08)}
+                warnings.append("章节编号存在跳跃，请检查是否漏识别章节。")
+        if candidate["number"] is not None:
+            previous_number = candidate["number"]
+        filtered.append(candidate)
+
+    if len(filtered) < 3:
+        confidence = round(sum(item["score"] for item in filtered) / max(3, len(filtered)), 4)
+        return [], confidence, ["识别到的章节标题少于 3 个，已改用智能切分。"]
+
+    distances = [
+        filtered[index + 1]["offset"] - filtered[index]["offset"]
+        for index in range(len(filtered) - 1)
+    ]
+    if any(distance < 80 for distance in distances) and text_length > 1000:
+        warnings.append("部分章节间距较短，可能存在误识别。")
+
+    average_score = sum(item["score"] for item in filtered) / len(filtered)
+    confidence = round(max(0.0, min(1.0, average_score + min(0.08, len(filtered) / 100))), 4)
+    return filtered, confidence, warnings
+
+
+def chapter_from_body(index, title, body):
+    body = body.strip()
+    return {
+        "chapter_id": f"chapter_{index + 1:03d}",
+        "order": index + 1,
+        "title": title,
+        "text": body,
+        "word_count": len(body),
+        "summary": body[:240],
+        "key_events": [],
+        "characters": [],
+        "locations": [],
+    }
+
+
+def split_by_boundaries(text, boundaries):
+    chapters = []
+    for index, boundary in enumerate(boundaries):
+        next_offset = boundaries[index + 1]["offset"] if index + 1 < len(boundaries) else len(text)
+        line_end = text.find("\n", boundary["offset"], next_offset)
+        if line_end == -1:
+            line_end = min(next_offset, len(text))
+        body_start = line_end + 1 if line_end < len(text) else line_end
+        body = "\n".join(
+            part
+            for part in [boundary.get("inline_body", ""), text[body_start:next_offset].strip()]
+            if part
+        ).strip()
+        if body:
+            title = boundary["title"]
+            if boundary.get("section") and not title.startswith(f"{boundary['section']} / "):
+                title = f"{boundary['section']} / {title}"
+            chapters.append(chapter_from_body(len(chapters), title, body))
+    return chapters
+
+
+def sanitize_candidates(candidates):
+    return [
+        {
+            "line": item["line_index"] + 1,
+            "title": item["title"],
+            "kind": item["kind"],
+            "score": round(item["score"], 4),
+            "number": item.get("number"),
+            "section": item.get("section"),
+            "excluded": bool(item.get("excluded")),
+            "reason": item.get("reason"),
+        }
+        for item in candidates[:30]
+    ]
+
+
+def smart_fallback_split(text):
+    chunks = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+    if len(chunks) < 3:
+        chunks = [part.strip() for part in text.splitlines() if part.strip()]
+    if len(chunks) < 3 and text.strip():
+        size = max(1, len(text) // 3)
+        chunks = [text[index : index + size].strip() for index in range(0, len(text), size) if text[index : index + size].strip()]
+    if not chunks:
+        return []
+
+    target_count = min(6, max(3, len(text) // 2500 + 1), len(chunks))
+    target_chars = max(1, len(text) // target_count)
+    groups = []
+    current = []
+    current_chars = 0
+    for chunk_index, chunk in enumerate(chunks):
+        current.append(chunk)
+        current_chars += len(chunk)
+        remaining_chunks = len(chunks) - chunk_index - 1
+        remaining_groups = target_count - len(groups) - 1
+        if (
+            len(groups) < target_count - 1
+            and current_chars >= target_chars
+            and remaining_chunks >= remaining_groups
+        ):
+            groups.append("\n\n".join(current))
+            current = []
+            current_chars = 0
+    if current:
+        groups.append("\n\n".join(current))
+
+    return [
+        chapter_from_body(index, f"自动拆分章节 {index + 1}", body)
+        for index, body in enumerate(groups[:6])
+        if body.strip()
+    ]
 
 
 def parse_chapters(text):
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
-    marker_chars = "一二三四五六七八九十百千万零〇两0-9"
-    pattern = re.compile(
-        rf"(?m)^\s*((?:第[{marker_chars}]+[章节回幕])|(?:Chapter\s+\d+)|(?:章节\s*[{marker_chars}]+))(?P<rest>[^\n]*)",
-        re.I,
-    )
-    matches = list(pattern.finditer(normalized))
-    chapters = []
-
-    if matches:
-        for index, match in enumerate(matches):
-            next_start = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
-            marker = match.group(1).strip()
-            title_tail, inline_body = parse_inline_chapter_rest(match.group("rest"))
-            block_body = normalized[match.end() : next_start].strip()
-            body = "\n".join(part for part in [inline_body, block_body] if part).strip()
-            title = f"{marker} {title_tail}".strip()
-            if body:
-                chapters.append(
-                    {
-                        "chapter_id": f"chapter_{len(chapters) + 1:03d}",
-                        "order": len(chapters) + 1,
-                        "title": title,
-                        "text": body,
-                        "word_count": len(body),
-                        "summary": body[:240],
-                        "key_events": [],
-                        "characters": [],
-                        "locations": [],
-                    }
-                )
-
-    if chapters:
-        return {
-            "chapters": chapters,
-            "mode": "heading",
-            "warning": None,
-            "chunk_count": 1,
-            "global_summary": merge_chapter_summaries(chapters),
-        }
-
     if not normalized:
         return {
             "chapters": [],
             "mode": "empty",
             "warning": "未提供小说文本。",
+            "warnings": ["未提供小说文本。"],
+            "confidence": 0.0,
+            "candidates": [],
             "chunk_count": 0,
             "global_summary": "",
         }
 
-    chunks = [part.strip() for part in re.split(r"\n\s*\n", normalized) if part.strip()]
-    size = max(1, len(chunks) // 3)
-    grouped = ["\n\n".join(chunks[i : i + size]) for i in range(0, len(chunks), size)]
-    fallback_chapters = [
-        {
-            "chapter_id": f"chapter_{index + 1:03d}",
-            "order": index + 1,
-            "title": f"自动拆分章节 {index + 1}",
-            "text": body,
-            "word_count": len(body),
-            "summary": body[:240],
-            "key_events": [],
-            "characters": [],
-            "locations": [],
-        }
-        for index, body in enumerate(grouped[:6])
-    ]
+    candidates = detect_chapter_candidates(normalized)
+    boundaries, confidence, warnings = select_chapter_boundaries(candidates, len(normalized))
+    if boundaries:
+        chapters = split_by_boundaries(normalized, boundaries)
+        if len(chapters) >= 3:
+            mode = "heading" if all(
+                item["kind"] in {"standard", "chapter_word", "english"}
+                for item in boundaries
+            ) else "soft_heading"
+            return {
+                "chapters": chapters,
+                "mode": mode,
+                "warning": "；".join(warnings) if warnings else None,
+                "warnings": warnings,
+                "confidence": confidence,
+                "candidates": sanitize_candidates(candidates),
+                "chunk_count": 1,
+                "global_summary": merge_chapter_summaries(chapters),
+            }
+
+    fallback_warning = "未可靠识别到 3 个以上章节标题，已按段落和长度智能切分；建议检查章节标题格式。"
+    fallback_chapters = smart_fallback_split(normalized)
+    if 0 < len(fallback_chapters) < 3:
+        size = max(1, len(normalized) // 3)
+        fallback_chapters = [
+            chapter_from_body(index, f"自动拆分章节 {index + 1}", body)
+            for index, body in enumerate(
+                normalized[start : start + size].strip()
+                for start in range(0, len(normalized), size)
+            )
+            if body
+        ][:3]
     return {
         "chapters": fallback_chapters,
-        "mode": "fallback",
-        "warning": "未识别到标准章节标题，已按段落自动拆分；建议使用“第一章 标题 正文”或单独章节标题行。",
+        "mode": "smart_fallback",
+        "warning": fallback_warning,
+        "warnings": [fallback_warning, *warnings],
+        "confidence": min(confidence, 0.45),
+        "candidates": sanitize_candidates(candidates),
         "chunk_count": 1,
         "global_summary": merge_chapter_summaries(fallback_chapters),
     }
