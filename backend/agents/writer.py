@@ -32,7 +32,7 @@ class WriterAgent:
                 script = provider_result["script"]
                 attempts = provider_result["attempts"]
                 usage = provider_result["usage"]
-                source = "llm"
+                source = "hybrid" if provider_result.get("batch_fallback_count") else "llm"
             else:
                 script = build_rule_script(plan, title)
         except Exception as exc:
@@ -105,6 +105,7 @@ class WriterLLMProvider:
         self.presence_penalty = float(get_env("WRITER_PRESENCE_PENALTY", "0.2"))
         self.frequency_penalty = float(get_env("WRITER_FREQUENCY_PENALTY", "0.3"))
         self.input_chars = int(get_env("WRITER_INPUT_CHARS", "18000"))
+        self.events_per_call = int(get_env("WRITER_EVENTS_PER_CALL", "1"))
 
     @property
     def enabled(self):
@@ -114,20 +115,78 @@ class WriterLLMProvider:
         if not self.enabled:
             raise RuntimeError("Writer LLM 未配置")
 
-        response = self.client.chat_json(
-            model=self.model,
-            system_prompt=WRITER_SYSTEM_PROMPT,
-            user_prompt=build_writer_prompt(plan, title, self.input_chars),
-            temperature=self.temperature,
-            top_p=self.top_p,
-            max_tokens=self.max_tokens,
-            presence_penalty=self.presence_penalty,
-            frequency_penalty=self.frequency_penalty,
+        scenes = []
+        retained = []
+        changed = []
+        next_steps = []
+        usage_items = []
+        total_attempts = 0
+        batch_fallback_count = 0
+
+        event_batches = chunk_events(plan["events"], self.events_per_call)
+        for batch_index, event_batch in enumerate(event_batches, start=1):
+            batch_plan = {
+                **plan,
+                "chapters": chapters_for_events(plan["chapters"], event_batch),
+                "events": event_batch,
+            }
+            try:
+                response = self.client.chat_json(
+                    model=self.model,
+                    system_prompt=WRITER_COMPACT_SYSTEM_PROMPT,
+                    user_prompt=build_writer_prompt(
+                        batch_plan,
+                        title,
+                        self.input_chars,
+                        batch_index=batch_index,
+                        batch_count=len(event_batches),
+                    ),
+                    temperature=min(self.temperature, 0.1),
+                    top_p=min(self.top_p, 0.8),
+                    max_tokens=min(self.max_tokens, 1200),
+                    response_format_json=True,
+                )
+                partial_script = normalize_script(response["data"], plan, title)
+                scenes.extend(partial_script["scenes"])
+                notes = partial_script.get("adaptation_notes") or {}
+                retained.extend(notes.get("retained") or [])
+                changed.extend(notes.get("changed") or [])
+                next_steps.extend(notes.get("next_steps") or [])
+                total_attempts += response["attempts"]
+                if response["usage"]:
+                    usage_items.append(response["usage"])
+            except Exception as exc:
+                batch_fallback_count += 1
+                scenes.extend(
+                    build_scenes(
+                        plan["chapters"],
+                        plan["characters"],
+                        plan["locations"],
+                        event_batch,
+                    )
+                )
+                next_steps.append(
+                    f"Writer 第 {batch_index} 批 LLM 生成失败，已用规则补齐：{exc}"
+                )
+
+        script = build_script(
+            title,
+            plan["chapters"],
+            plan["characters"],
+            plan["locations"],
+            plan["events"],
+            renumber_scenes(scenes),
+            {
+                "retained": retained,
+                "changed": changed,
+                "next_steps": next_steps,
+            },
         )
         return {
-            "script": normalize_script(response["data"], plan, title),
-            "usage": response["usage"],
-            "attempts": response["attempts"],
+            "script": script,
+            "usage": merge_usage(usage_items),
+            "attempts": total_attempts,
+            "batch_fallback_count": batch_fallback_count,
         }
 
     def repair(self, script, plan, validation):
@@ -152,6 +211,7 @@ class WriterLLMProvider:
             temperature=0.2,
             top_p=0.9,
             max_tokens=self.max_tokens,
+            response_format_json=True,
         )
         repaired = normalize_script(
             response["data"],
@@ -168,6 +228,14 @@ class WriterLLMProvider:
 def build_writer_provider():
     provider = WriterLLMProvider()
     return provider if provider.enabled else None
+
+
+WRITER_COMPACT_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Agent。
+只输出严格 JSON，不要 Markdown，不要解释。
+输出对象只能包含 scenes 和 adaptation_notes。
+每个 scene 必须引用输入中已有的 chapter_id、character_id、location_id、event_id。
+每个 scene 至少 3 个 elements，类型只能是 action、dialogue、narration、transition、sound、shot。
+dialogue 必须带 character_id。"""
 
 
 WRITER_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Agent。
@@ -214,16 +282,22 @@ WRITER_REPAIR_SYSTEM_PROMPT = """你是 Novel2Script 的 Writer Repair Agent。
 """
 
 
-def build_writer_prompt(plan, title, max_input_chars=18000):
+def build_writer_prompt(
+    plan,
+    title,
+    max_input_chars=18000,
+    batch_index=1,
+    batch_count=1,
+):
     chapter_excerpts = []
     chapter_count = max(1, len(plan["chapters"]))
-    excerpt_chars = max(240, min(1800, max_input_chars // chapter_count))
+    excerpt_chars = max(160, min(900, max_input_chars // chapter_count))
     for chapter in plan["chapters"]:
         chapter_excerpts.append(
             {
                 "id": chapter["chapter_id"],
                 "title": chapter["title"],
-                "summary": chapter.get("summary", ""),
+                "summary": chapter.get("summary", "")[:360],
                 "excerpt": chapter["text"][:excerpt_chars],
             }
         )
@@ -236,10 +310,49 @@ def build_writer_prompt(plan, title, max_input_chars=18000):
         "events": plan["events"],
     }
     return (
-        "请生成 6 到 15 个场景；优先覆盖全部事件；对白要符合人物身份，"
-        "动作必须可拍摄，避免直接复制长段小说叙述。\n"
+        f"这是第 {batch_index}/{batch_count} 批 Writer 任务。"
+        "请按 events 顺序生成剧本初稿：每个 event 生成 1 个 scene；"
+        "每个 scene 保持简洁，包含 3 到 5 个 elements；"
+        "elements 中至少一个必须带对应 event_id；"
+        "对白要符合人物身份，动作必须可拍摄，避免直接复制长段小说叙述。\n"
         + json.dumps(payload, ensure_ascii=False)
     )
+
+
+def chunk_events(events, size):
+    size = max(1, size)
+    return [events[index : index + size] for index in range(0, len(events), size)] or [[]]
+
+
+def chapters_for_events(chapters, events):
+    wanted = {event.get("source_chapter") for event in events}
+    selected = [chapter for chapter in chapters if chapter.get("chapter_id") in wanted]
+    return selected or chapters[:1]
+
+
+def renumber_scenes(scenes):
+    renumbered = []
+    for index, scene in enumerate(scenes, start=1):
+        item = deepcopy(scene)
+        item["id"] = f"scene_{index:03d}"
+        renumbered.append(item)
+    return renumbered
+
+
+def merge_usage(usage_items):
+    if not usage_items:
+        return None
+    merged = {}
+    for usage in usage_items:
+        for key, value in usage.items():
+            if isinstance(value, (int, float)):
+                merged[key] = merged.get(key, 0) + value
+            elif isinstance(value, dict):
+                nested = merged.setdefault(key, {})
+                for nested_key, nested_value in value.items():
+                    if isinstance(nested_value, (int, float)):
+                        nested[nested_key] = nested.get(nested_key, 0) + nested_value
+    return merged
 
 
 def normalize_script(result, plan, title):
@@ -247,6 +360,8 @@ def normalize_script(result, plan, title):
     notes = result.get("adaptation_notes")
     if not isinstance(scenes, list) or not scenes:
         raise ValueError("Writer LLM 输出缺少 scenes")
+    if isinstance(notes, list):
+        notes = {"changed": notes}
     if not isinstance(notes, dict):
         notes = {}
 
@@ -259,23 +374,28 @@ def normalize_script(result, plan, title):
         if not isinstance(scene, dict):
             continue
         heading = scene.get("heading") if isinstance(scene.get("heading"), dict) else {}
-        location_id = heading.get("location_id")
+        location_id = heading.get("location_id") or scene.get("location_id")
         if location_id not in location_ids:
             location_id = plan["locations"][index % len(plan["locations"])]["id"]
 
-        source_chapters = [
-            item for item in scene.get("source_chapters", []) if item in chapter_ids
-        ]
+        raw_source_chapters = scene.get("source_chapters", [])
+        if isinstance(raw_source_chapters, str):
+            raw_source_chapters = [raw_source_chapters]
+        if scene.get("chapter_id"):
+            raw_source_chapters = [*raw_source_chapters, scene.get("chapter_id")]
+        source_chapters = [item for item in raw_source_chapters if item in chapter_ids]
         if not source_chapters:
             source_chapters = [plan["chapters"][index % len(plan["chapters"])]["chapter_id"]]
 
-        scene_characters = [
-            item for item in scene.get("characters", []) if item in character_ids
-        ]
+        raw_scene_characters = scene.get("characters", scene.get("character_ids", []))
+        if isinstance(raw_scene_characters, str):
+            raw_scene_characters = [raw_scene_characters]
+        scene_characters = [item for item in raw_scene_characters if item in character_ids]
         if not scene_characters:
             scene_characters = [plan["characters"][0]["id"]]
 
         elements = []
+        scene_event_id = scene.get("event_id")
         for element in scene.get("elements", []):
             if not isinstance(element, dict):
                 continue
@@ -284,7 +404,7 @@ def normalize_script(result, plan, title):
                 continue
             normalized = {
                 "type": element_type,
-                "text": str(element.get("text") or "").strip(),
+                "text": str(element.get("text") or element.get("content") or "").strip(),
             }
             if not normalized["text"]:
                 continue
@@ -293,12 +413,42 @@ def normalize_script(result, plan, title):
                 normalized["character_id"] = (
                     character_id if character_id in character_ids else scene_characters[0]
                 )
-            if element.get("event_id"):
-                normalized["event_id"] = element["event_id"]
+            event_id = element.get("event_id") or scene_event_id
+            if event_id:
+                normalized["event_id"] = event_id
             elements.append(normalized)
 
-        if len(elements) < 3:
-            raise ValueError(f"Writer LLM 场景 {index + 1} 的剧本元素不足")
+        while len(elements) < 3:
+            event_id = scene_event_id
+            fallback_event = next(
+                (item for item in plan["events"] if item.get("id") == event_id),
+                plan["events"][index % len(plan["events"])],
+            )
+            if len(elements) == 0:
+                elements.append(
+                    {
+                        "type": "action",
+                        "text": fallback_event.get("summary") or "人物进入当前场景并推动事件发展。",
+                        "event_id": fallback_event["id"],
+                    }
+                )
+            elif len(elements) == 1:
+                elements.append(
+                    {
+                        "type": "dialogue",
+                        "character_id": scene_characters[0],
+                        "text": fallback_event.get("conflict") or "我们必须现在做出决定。",
+                        "event_id": fallback_event["id"],
+                    }
+                )
+            else:
+                elements.append(
+                    {
+                        "type": "narration",
+                        "text": fallback_event.get("emotional_shift") or "局面因这个选择发生变化。",
+                        "event_id": fallback_event["id"],
+                    }
+                )
 
         normalized_scenes.append(
             {
